@@ -1,0 +1,16 @@
+# Dependencies and generated production output
+node_modules/
+dist/
+
+# Local environment configuration (keep .env.example committed)
+.env
+.env.local
+.env.*.local
+
+# Tooling and operating-system files
+.vite/
+coverage/
+*.log
+.DS_Store
+.idea/
+.vscode/
