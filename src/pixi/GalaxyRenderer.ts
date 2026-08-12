@@ -680,7 +680,10 @@ export class GalaxyRenderer {
     this.blastViews.forEach((view, objectId) => {
       const projectile = this.objectViews.get(objectId)
       const radius = this.blastRadii.get(objectId)
-      if (!projectile || !radius) {
+      // The local fire-event visual owns this projectile during flight. Do
+      // not also render Firebase's blast layer, otherwise its ring can keep
+      // moving after the predicted dot has disappeared at contact.
+      if (!projectile || !radius || this.localProjectilePreviews.has(objectId) || this.hiddenProjectiles.has(objectId)) {
         view.alpha = 0
         return
       }
