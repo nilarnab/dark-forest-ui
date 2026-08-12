@@ -9,24 +9,30 @@ function goTo(path: string) {
   window.location.assign(path)
 }
 
-export function CreateUniversePage() {
+export function CreateUniversePage({ embedded = false, onBack, onPreviewChange, onBeforeCreate, onCreationFailed }: { embedded?: boolean; onBack?: () => void; onPreviewChange?: (preview: { starCount: number; shipCount: number }) => void; onBeforeCreate?: () => Promise<void>; onCreationFailed?: () => void }) {
   const username = cachedUsername()
   const [starCount, setStarCount] = useState(20)
-  const [shipCount, setShipCount] = useState(1)
+  const [shipCount, setShipCount] = useState(3)
   const [status, setStatus] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
   useEffect(() => {
-    if (!username) goTo('/intro/login')
-  }, [username])
+    if (!username) {
+      if (onBack) onBack()
+      else goTo('/intro/login')
+    }
+  }, [username, onBack])
+
+  useEffect(() => { onPreviewChange?.({ starCount, shipCount }) }, [onPreviewChange, shipCount, starCount])
 
   async function createUniverse(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!username) return
     playUiClick()
     setCreating(true)
-    setStatus('GENERATING STAR MAP…')
     try {
+      await onBeforeCreate?.()
+      setStatus('GENERATING STAR MAP…')
       const apiUrl = import.meta.env.VITE_SIMULATION_API_URL ?? 'http://localhost:5000'
       const response = await fetch(`${apiUrl}/auth/universe/new`, {
         method: 'POST',
@@ -41,13 +47,14 @@ export function CreateUniversePage() {
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Universe creation failed.')
       setCreating(false)
+      onCreationFailed?.()
     }
   }
 
   if (!username) return null
-  return (
-    <main className="intro-page">
-      <form className="intro-panel setup-panel" onSubmit={createUniverse}>
+  const form = (
+    <form className="intro-panel setup-panel" onSubmit={createUniverse}>
+        {onBack && <button className="intro-back" type="button" onClick={() => { playUiClick(); onBack() }}>← BACK</button>}
         <span className="intro-kicker">ARCADE 1 V 1 · UNIVERSE SETUP</span>
         <h1>CONFIGURE NEW UNIVERSE</h1>
         <label className="setup-row">
@@ -64,7 +71,7 @@ export function CreateUniversePage() {
         </div>
         <button className="intro-mode" type="submit" disabled={creating}>{creating ? 'GENERATING…' : 'CREATE UNIVERSE'}</button>
         {status && <output className="login-status">{status}</output>}
-      </form>
-    </main>
+    </form>
   )
+  return embedded ? form : <main className="intro-page">{form}</main>
 }

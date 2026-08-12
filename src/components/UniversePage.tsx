@@ -17,15 +17,18 @@ function universeList(value: unknown): string[] {
   return Object.keys(value as Record<string, unknown>).sort()
 }
 
-export function UniversePage() {
+export function UniversePage({ embedded = false, onBack, onCreateNew }: { embedded?: boolean; onBack?: () => void; onCreateNew?: () => void }) {
   const username = cachedUsername()
   const [universeId, setUniverseId] = useState('')
   const [lookup, setLookup] = useState<LookupState>('idle')
   const [universes, setUniverses] = useState<string[]>([])
 
   useEffect(() => {
-    if (!username) goTo('/intro/login')
-  }, [username])
+    if (!username) {
+      if (onBack) onBack()
+      else goTo('/intro/login')
+    }
+  }, [username, onBack])
 
   useEffect(() => {
     if (!username) return
@@ -69,9 +72,9 @@ export function UniversePage() {
   }
 
   if (!username) return null
-  return (
-    <main className="intro-page">
-      <section className="intro-panel universe-panel" aria-labelledby="universe-title">
+  const content = (
+    <section className="intro-panel universe-panel" aria-labelledby="universe-title">
+        {onBack && <button className="intro-back" type="button" onClick={() => { playUiClick(); onBack() }}>← BACK</button>}
         <span className="intro-kicker">ARCADE 1 V 1 · {username.toUpperCase()}</span>
         <h1 id="universe-title">SELECT UNIVERSE</h1>
         <label>
@@ -86,7 +89,7 @@ export function UniversePage() {
           {lookup === 'error' && 'FIREBASE LOOKUP FAILED'}
         </output>
         {lookup === 'available' && <button className="intro-mode" type="button" onClick={() => void enter(universeId.trim())}>ENTER UNIVERSE</button>}
-        <button className="intro-mode create-universe" type="button" onClick={() => { playUiClick(); goTo('/intro/universe/new') }}>
+        <button className="intro-mode create-universe" type="button" onClick={() => { playUiClick(); if (onCreateNew) onCreateNew(); else goTo('/intro/universe/new') }}>
           CREATE NEW UNIVERSE
         </button>
         <div className="saved-universes">
@@ -95,7 +98,7 @@ export function UniversePage() {
             <button key={id} className="intro-mode" type="button" onClick={() => void enter(id)}>{id}</button>
           ))}
         </div>
-      </section>
-    </main>
+    </section>
   )
+  return embedded ? content : <main className="intro-page">{content}</main>
 }

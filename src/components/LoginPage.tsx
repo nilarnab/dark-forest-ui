@@ -6,15 +6,17 @@ function goTo(path: string) {
   window.location.assign(path)
 }
 
-export function LoginPage() {
+export function LoginPage({ embedded = false, onBack, onAuthenticated }: { embedded?: boolean; onBack?: () => void; onAuthenticated?: () => void }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [status, setStatus] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
-    if (cachedUsername()) goTo('/intro/universe')
-  }, [])
+    if (!cachedUsername()) return
+    if (onAuthenticated) onAuthenticated()
+    else goTo('/intro/universe')
+  }, [onAuthenticated])
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -32,16 +34,19 @@ export function LoginPage() {
       if (!response.ok || !body.ok || !body.username) throw new Error(body.error ?? 'Authentication failed.')
       cacheUsername(body.username)
       setStatus(body.action === 'signup' ? 'ACCOUNT CREATED · ENTERING ARCADE…' : 'LOGIN ACCEPTED · ENTERING ARCADE…')
-      window.setTimeout(() => goTo('/intro/universe'), 350)
+      window.setTimeout(() => {
+        if (onAuthenticated) onAuthenticated()
+        else goTo('/intro/universe')
+      }, 350)
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Authentication failed.')
       setSubmitting(false)
     }
   }
 
-  return (
-    <main className="intro-page">
-      <form className="intro-panel login-panel" onSubmit={submit}>
+  const form = (
+    <form className="intro-panel login-panel" onSubmit={submit}>
+        {onBack && <button className="intro-back" type="button" onClick={() => { playUiClick(); onBack() }}>← BACK</button>}
         <span className="intro-kicker">ARCADE 1 V 1</span>
         <h1>IDENTIFY YOURSELF</h1>
         <label>
@@ -55,7 +60,7 @@ export function LoginPage() {
         <button className="intro-mode" type="submit" disabled={submitting}>{submitting ? 'PLEASE WAIT…' : 'CONTINUE'}</button>
         <small>New username? A HUMAN account will be created automatically.</small>
         {status && <output className="login-status">{status}</output>}
-      </form>
-    </main>
+    </form>
   )
+  return embedded ? form : <main className="intro-page">{form}</main>
 }

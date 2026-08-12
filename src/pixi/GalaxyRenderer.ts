@@ -8,6 +8,7 @@ type CurveState = { x: number; y: number; a: number; b: number; rotation: number
 type PendingPredictedHit = { targetId: string; predictedAt: number; clientDistance: number; verificationRequested?: boolean }
 type LocalProjectilePreview = { view: Graphics; rangeView: Graphics; start: Position; rotation: number; speed: number; firedAt: number; expiresAt: number; sourceId: string; hitRadius: number; lastPosition: Position; lastSimulationTime: number; pendingHit?: { targetId: string; hitTime: number; clientDistance: number }; stoppedPosition?: Position }
 type ProjectileFiredEvent = { projectile_id: string; source_id: string; start_location: Position; rotation: number; velocity: number; hit_radius: number; fired_at: number; range: number }
+type OpeningCamera = { startedAt: number; startZoom: number; endZoom: number; startFocus: Position; endFocus: Position }
 
 const subtypeIconUrls: Record<string, string> = {
   cruise_level_1: '/icons/scout-ship.svg',
@@ -59,6 +60,7 @@ export class GalaxyRenderer {
   private initialized = false
   private disposed = false
   private targetZoom = 1
+  private openingCamera: OpeningCamera | null = null
   private zoomAnchor: { screen: Position; world: Position } | null = null
   private lastFrameTime = 0
   private predictionUniverse: Universe | null = null
@@ -172,6 +174,7 @@ export class GalaxyRenderer {
   }
 
   zoomBy(factor: number, clientPoint?: Position) {
+    this.openingCamera = null
     const anchorScreen = clientPoint ? this.clientToCanvasPoint(clientPoint) : {
       x: this.host.clientWidth / 2,
       y: this.host.clientHeight / 2,
@@ -409,11 +412,24 @@ export class GalaxyRenderer {
     if (!assignedStar) return
     const position = this.objectTargets.get(assignedStar[0]) ?? objectPosition(assignedStar[1])
     if (!position) return
-    const zoom = this.world.scale.x
+    const zoom = 3
+    const finalFrame = frameNaturalObjects(entries, this.host.clientWidth, this.host.clientHeight)
+    this.world.scale.set(zoom)
+    this.targetZoom = zoom
     this.world.position.set(
       this.host.clientWidth / 2 - position.x * zoom,
       this.host.clientHeight / 2 - position.y * zoom,
     )
+    if (finalFrame) {
+      this.openingCamera = {
+        // Hold the close assigned-star view before the map reveal begins.
+        startedAt: performance.now() + 3000,
+        startZoom: zoom,
+        endZoom: finalFrame.zoom,
+        startFocus: position,
+        endFocus: finalFrame.focus,
+      }
+    }
     this.hasCenteredOnAssignedStar = true
   }
 
@@ -534,9 +550,27 @@ export class GalaxyRenderer {
     const easing = 1 - Math.exp(-18 * delta)
     const fade = Math.min(1, delta * 4)
 
-    const zoom = this.world.scale.x + (this.targetZoom - this.world.scale.x) * easing
-    this.world.scale.set(zoom)
-    if (this.zoomAnchor) {
+    const opening = this.openingCamera
+    if (opening) {
+      // Same accelerated profile as the intro camera: it starts almost still
+      // at the assigned star, then quickly opens out to reveal the map.
+      const progress = Math.min(1, Math.max(0, (now - opening.startedAt) / 1000))
+      const easeIn = progress ** 4
+      const zoom = opening.startZoom + (opening.endZoom - opening.startZoom) * easeIn
+      const focusX = opening.startFocus.x + (opening.endFocus.x - opening.startFocus.x) * easeIn
+      const focusY = opening.startFocus.y + (opening.endFocus.y - opening.startFocus.y) * easeIn
+      this.world.scale.set(zoom)
+      this.world.position.set(this.host.clientWidth / 2 - focusX * zoom, this.host.clientHeight / 2 - focusY * zoom)
+      if (progress >= 1) {
+        this.targetZoom = opening.endZoom
+        this.openingCamera = null
+      }
+    } else {
+      const zoom = this.world.scale.x + (this.targetZoom - this.world.scale.x) * easing
+      this.world.scale.set(zoom)
+    }
+    if (!this.openingCamera && this.zoomAnchor) {
+      const zoom = this.world.scale.x
       this.world.position.set(
         this.zoomAnchor.screen.x - this.zoomAnchor.world.x * zoom,
         this.zoomAnchor.screen.y - this.zoomAnchor.world.y * zoom,
@@ -544,6 +578,7 @@ export class GalaxyRenderer {
       if (Math.abs(this.targetZoom - zoom) < 0.0001) this.zoomAnchor = null
     }
 
+    const zoom = this.world.scale.x
     const simulationTime = this.currentSimulationTime(now)
     if (this.localSimulationUpdatedAt && !this.simulationPaused) {
       const positions = predictPositions(this.predictionObjects, simulationTime)
@@ -1127,6 +1162,27 @@ function isExpiredProjectile(object: UniverseObject | undefined, simulationTime:
     && typeof curve.valid_till === 'number'
     && simulationTime >= curve.valid_till
   ))
+}
+
+function frameNaturalObjects(entries: [string, UniverseObject][], width: number, height: number) {
+  const positions = entries
+    .filter(([, object]) => object.type === 'NATURAL')
+    .map(([, object]) => objectPosition(object))
+    .filter((position): position is Position => position !== null)
+  if (!positions.length || width <= 0 || height <= 0) return null
+  const minX = Math.min(...positions.map((position) => position.x))
+  const maxX = Math.max(...positions.map((position) => position.x))
+  const minY = Math.min(...positions.map((position) => position.y))
+  const maxY = Math.max(...positions.map((position) => position.y))
+  // Extra breathing room around the outermost stars so the opening frame
+  // reads as a complete universe rather than a tightly cropped map.
+  const padding = 260
+  const spanX = Math.max(120, maxX - minX + padding * 2)
+  const spanY = Math.max(120, maxY - minY + padding * 2)
+  return {
+    focus: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
+    zoom: Math.min(2, Math.max(0.08, Math.min(width / spanX, height / spanY))),
+  }
 }
 
 function drawHitRing(graphics: Graphics, color: number) {
