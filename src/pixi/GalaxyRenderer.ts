@@ -6,7 +6,7 @@ type Position = { x: number; y: number }
 type TransferArc = { centre: Position; basisU: Position; basisV: Position; phaseStart: number; phaseEnd: number }
 type CurveState = { x: number; y: number; a: number; b: number; rotation: number; dotted: boolean; transferArc?: TransferArc }
 type PendingPredictedHit = { targetId: string; predictedAt: number; clientDistance: number; verificationRequested?: boolean }
-type LocalProjectilePreview = { view: Graphics; start: Position; rotation: number; speed: number; firedAt: number; expiresAt: number; sourceId: string; hitRadius: number; lastPosition: Position; lastSimulationTime: number; pendingHit?: { targetId: string; hitTime: number; clientDistance: number }; stoppedPosition?: Position }
+type LocalProjectilePreview = { view: Graphics; rangeView: Graphics; start: Position; rotation: number; speed: number; firedAt: number; expiresAt: number; sourceId: string; hitRadius: number; lastPosition: Position; lastSimulationTime: number; pendingHit?: { targetId: string; hitTime: number; clientDistance: number }; stoppedPosition?: Position }
 type ProjectileFiredEvent = { projectile_id: string; source_id: string; start_location: Position; rotation: number; velocity: number; hit_radius: number; fired_at: number; range: number }
 
 const subtypeIconUrls: Record<string, string> = {
@@ -212,9 +212,12 @@ export class GalaxyRenderer {
   launchLocalProjectile(id: string, sourceId: string, start: Position, rotation: number, speed: number, hitRadius: number, firedAt: number, range: number) {
     if (this.localProjectilePreviews.has(id) || !Number.isFinite(speed) || speed <= 0) return
     const view = new Graphics().circle(0, 0, 1.8).fill({ color: 0xff6f61, alpha: 1 })
+    const rangeView = new Graphics()
     this.objects.addChild(view)
+    this.blastRanges.addChild(rangeView)
     this.localProjectilePreviews.set(id, {
       view,
+      rangeView,
       start,
       rotation: rotation * Math.PI / 180,
       speed,
@@ -243,6 +246,7 @@ export class GalaxyRenderer {
     const preview = this.localProjectilePreviews.get(id)
     if (!preview) return
     preview.view.destroy()
+    preview.rangeView.destroy()
     this.localProjectilePreviews.delete(id)
   }
 
@@ -580,6 +584,7 @@ export class GalaxyRenderer {
       }
       if (simulationTime > preview.expiresAt) {
         preview.view.destroy()
+        preview.rangeView.destroy()
         this.localProjectilePreviews.delete(id)
         return
       }
@@ -592,6 +597,7 @@ export class GalaxyRenderer {
           // promoteLocalProjectile will submit this queued verification once
           // the ID arrives.
           preview.view.alpha = 0
+          preview.rangeView.alpha = 0
         } else {
           this.reportLocalProjectileHit(id, preview, hit)
         }
@@ -599,6 +605,9 @@ export class GalaxyRenderer {
       }
       preview.view.position.set(position.x, position.y)
       preview.view.scale.set(1 / zoom)
+      preview.rangeView.position.set(position.x, position.y)
+      preview.rangeView.alpha = 1
+      drawBlastRange(preview.rangeView, preview.hitRadius, (Math.sin((now / 1000) * Math.PI * 6) + 1) / 2)
       preview.lastPosition = position
       preview.lastSimulationTime = simulationTime
     })
@@ -953,6 +962,7 @@ export class GalaxyRenderer {
 
   private reportLocalProjectileHit(projectileId: string, preview: LocalProjectilePreview, hit: { targetId: string; hitTime: number; clientDistance: number }) {
     preview.view.destroy()
+    preview.rangeView.destroy()
     this.localProjectilePreviews.delete(projectileId)
     this.pendingPredictedHits.set(projectileId, {
       targetId: hit.targetId,
