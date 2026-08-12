@@ -551,7 +551,14 @@ export class GalaxyRenderer {
     this.objectViews.forEach((view, id) => {
       const target = this.objectTargets.get(id)
       const object = this.predictionObjects[id]
-      const shouldShow = Boolean(target) && !this.hiddenProjectiles.has(id) && !isExpiredProjectile(object, simulationTime)
+      // A received fire event owns the projectile's visual for its entire
+      // flight. Firebase still supplies the shared projectile record, but it
+      // must not replace the client prediction mid-flight or produce a pause
+      // while the two representations reconcile.
+      const shouldShow = Boolean(target)
+        && !this.localProjectilePreviews.has(id)
+        && !this.hiddenProjectiles.has(id)
+        && !isExpiredProjectile(object, simulationTime)
       const visible = Math.max(0, Math.min(1, (this.objectVisibility.get(id) ?? 0) + (shouldShow ? fade : -fade)))
       this.objectVisibility.set(id, visible)
       if (target) view.position.set(view.x + (target.x - view.x) * easing, view.y + (target.y - view.y) * easing)
@@ -571,17 +578,6 @@ export class GalaxyRenderer {
         x: preview.start.x + Math.cos(preview.rotation) * preview.speed * elapsed,
         y: preview.start.y + Math.sin(preview.rotation) * preview.speed * elapsed,
       }
-      if (this.predictionObjects[id]) {
-        const authoritative = this.objectViews.get(id)
-        if (authoritative) {
-          authoritative.position.set(position.x, position.y)
-          this.objectTargets.set(id, position)
-          this.objectVisibility.set(id, 1)
-        }
-        preview.view.destroy()
-        this.localProjectilePreviews.delete(id)
-        return
-      }
       if (simulationTime > preview.expiresAt) {
         preview.view.destroy()
         this.localProjectilePreviews.delete(id)
@@ -591,9 +587,11 @@ export class GalaxyRenderer {
       if (hit) {
         if (id.startsWith('local-projectile-')) {
           preview.pendingHit = hit
-          preview.stoppedPosition = position
-          preview.view.position.set(position.x, position.y)
-          preview.view.scale.set(1 / zoom)
+          // The server-generated projectile ID may not have returned yet.
+          // Hide this one immediately instead of leaving it frozen at contact;
+          // promoteLocalProjectile will submit this queued verification once
+          // the ID arrives.
+          preview.view.alpha = 0
         } else {
           this.reportLocalProjectileHit(id, preview, hit)
         }
@@ -867,6 +865,7 @@ export class GalaxyRenderer {
       if (
         projectile.sub_type !== 'PROJECTILE'
         || isExpiredProjectile(projectile, simulationTime)
+        || this.localProjectilePreviews.has(projectileId)
         || this.hiddenProjectiles.has(projectileId)
         || this.pendingPredictedHits.has(projectileId)
       ) continue
