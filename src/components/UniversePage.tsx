@@ -6,6 +6,7 @@ import { cachedUsername } from '../session'
 import { enterUniverse } from '../universeAccess'
 
 type LookupState = 'idle' | 'checking' | 'available' | 'missing' | 'error'
+const DEFAULT_ARCADE_UNIVERSE_ID = '3326'
 
 function goTo(path: string) {
   window.location.assign(path)
@@ -14,7 +15,15 @@ function goTo(path: string) {
 function universeList(value: unknown): string[] {
   if (Array.isArray(value)) return []
   if (!value || typeof value !== 'object') return []
-  return Object.keys(value as Record<string, unknown>).sort()
+  // Membership keys are universe IDs. Prefer an explicit joined/updated time
+  // when available, while still supporting the existing key-only records.
+  return Object.entries(value as Record<string, unknown>)
+    .sort(([, left], [, right]) => {
+      const leftTime = typeof left === 'object' && left !== null && typeof (left as Record<string, unknown>).joined_at === 'number' ? (left as Record<string, number>).joined_at : 0
+      const rightTime = typeof right === 'object' && right !== null && typeof (right as Record<string, unknown>).joined_at === 'number' ? (right as Record<string, number>).joined_at : 0
+      return rightTime - leftTime
+    })
+    .map(([id]) => id)
 }
 
 export function UniversePage({ embedded = false, onBack, onCreateNew }: { embedded?: boolean; onBack?: () => void; onCreateNew?: () => void }) {
@@ -46,7 +55,7 @@ export function UniversePage({ embedded = false, onBack, onCreateNew }: { embedd
           typedUniverseId ? get(ref(database, `universes/${typedUniverseId}`)) : Promise.resolve(null),
         ])
         if (!live) return
-        setUniverses(universeList(savedSnapshot.val()))
+        setUniverses([...new Set([DEFAULT_ARCADE_UNIVERSE_ID, ...universeList(savedSnapshot.val())])])
         setLookup(typedUniverseId ? (universeSnapshot?.exists() ? 'available' : 'missing') : 'idle')
       } catch {
         if (live) setLookup('error')
@@ -76,10 +85,15 @@ export function UniversePage({ embedded = false, onBack, onCreateNew }: { embedd
     <section className="intro-panel universe-panel" aria-labelledby="universe-title">
         {onBack && <button className="intro-back" type="button" onClick={() => { playUiClick(); onBack() }}>← BACK</button>}
         <span className="intro-kicker">ARCADE 1 V 1 · {username.toUpperCase()}</span>
-        <h1 id="universe-title">SELECT UNIVERSE</h1>
+        <div className="saved-universes">
+          <span>YOUR UNIVERSES</span>
+          {universes.length === 0 ? <small>NO SAVED UNIVERSES</small> : universes.slice(0, 5).map((id) => (
+            <button key={id} className="intro-mode" type="button" onClick={() => void enter(id)}>{id}</button>
+          ))}
+        </div>
         <label>
-          UNIVERSE ID
-          <input value={universeId} onChange={(event) => setUniverseId(event.target.value)} placeholder="univid1123" autoFocus />
+          WANT A DIFFERENT UNIVERSE ID?
+          <input value={universeId} onChange={(event) => setUniverseId(event.target.value)} placeholder="ENTER UNIVERSE ID" />
         </label>
         <output className={`universe-status ${lookup}`}>
           {lookup === 'idle' && 'ENTER A UNIVERSE ID'}
@@ -92,12 +106,6 @@ export function UniversePage({ embedded = false, onBack, onCreateNew }: { embedd
         <button className="intro-mode create-universe" type="button" onClick={() => { playUiClick(); if (onCreateNew) onCreateNew(); else goTo('/intro/universe/new') }}>
           CREATE NEW UNIVERSE
         </button>
-        <div className="saved-universes">
-          <span>YOUR UNIVERSES</span>
-          {universes.length === 0 ? <small>NO SAVED UNIVERSES</small> : universes.map((id) => (
-            <button key={id} className="intro-mode" type="button" onClick={() => void enter(id)}>{id}</button>
-          ))}
-        </div>
     </section>
   )
   return embedded ? content : <main className="intro-page">{content}</main>

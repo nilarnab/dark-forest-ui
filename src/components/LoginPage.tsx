@@ -49,6 +49,7 @@ export function LoginPage({ embedded = false, onBack, onAuthenticated }: { embed
         {onBack && <button className="intro-back" type="button" onClick={() => { playUiClick(); onBack() }}>← BACK</button>}
         <span className="intro-kicker">ARCADE 1 V 1</span>
         <h1>IDENTIFY YOURSELF</h1>
+        <p className="login-signup-assurance">If you are a new user, just put any username and password and we will sign you up automatically.</p>
         <label>
           USERNAME
           <input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required />
@@ -58,7 +59,6 @@ export function LoginPage({ embedded = false, onBack, onAuthenticated }: { embed
           <input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
         </label>
         <button className="intro-mode" type="submit" disabled={submitting}>{submitting ? 'PLEASE WAIT…' : 'CONTINUE'}</button>
-        <small>New username? A HUMAN account will be created automatically.</small>
         {status && <output className="login-status">{status}</output>}
     </form>
   )

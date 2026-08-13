@@ -9,7 +9,7 @@ import { CreateUniversePage } from './CreateUniversePage'
 const modes = [
   { id: 'arcade-1v1', label: 'Arcade 1 v 1' },
   { id: 'arcade-agent', label: 'Arcade 1 v Agent', disabled: true },
-  { id: 'dark-forest-simulator', label: 'Dark Forest Simulator', disabled: true },
+  { id: 'dark-forest', label: 'Dark Forest' },
 ]
 
 export function IntroPage() {
@@ -74,6 +74,10 @@ export function IntroPage() {
               onBlur={() => { if (mode.id === 'arcade-1v1') setArcadeHovered(false) }}
               onClick={() => {
                 playUiClick()
+                if (mode.id === 'dark-forest') {
+                  window.location.assign('/intro/darkforest')
+                  return
+                }
                 if (cachedUsername()) openUniverseStage()
                 else openLoginStage()
               }}

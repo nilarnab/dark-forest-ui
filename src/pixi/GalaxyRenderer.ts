@@ -1,6 +1,7 @@
 import { Application, Assets, Circle, Container, FederatedPointerEvent, Graphics, Sprite, Text, Texture } from 'pixi.js'
 import type { Curve, Universe, UniverseObject } from '../types/universe'
 import { predictPositions } from './prediction'
+import { STAR_DEATH_WAVE_DURATIONS, STAR_DEATH_WAVE_RADII, STAR_DEATH_WAVE_STARTS } from '../animations/starDeath'
 
 type Position = { x: number; y: number }
 type TransferArc = { centre: Position; basisU: Position; basisV: Position; phaseStart: number; phaseEnd: number }
@@ -9,6 +10,7 @@ type PendingPredictedHit = { targetId: string; predictedAt: number; clientDistan
 type LocalProjectilePreview = { view: Graphics; rangeView: Graphics; start: Position; rotation: number; speed: number; firedAt: number; expiresAt: number; sourceId: string; hitRadius: number; lastPosition: Position; lastSimulationTime: number; pendingHit?: { targetId: string; hitTime: number; clientDistance: number }; stoppedPosition?: Position }
 type ProjectileFiredEvent = { projectile_id: string; source_id: string; start_location: Position; rotation: number; velocity: number; hit_radius: number; fired_at: number; range: number }
 type OpeningCamera = { startedAt: number; startZoom: number; endZoom: number; startFocus: Position; endFocus: Position }
+type StarDeathEffect = { view: Graphics; position: Position; startedAt: number }
 
 const subtypeIconUrls: Record<string, string> = {
   cruise_level_1: '/icons/scout-ship.svg',
@@ -46,6 +48,10 @@ export class GalaxyRenderer {
   private lastObjectPositions = new Map<string, Position>()
   private lastPredictedSimulationTime: number | null = null
   private hitEffectViews = new Map<string, { view: Graphics; expiresAt: number }>()
+  private starDeathEffects = new Map<string, StarDeathEffect>()
+  private starDeathStartedAt = new Map<string, number>()
+  private knownLife = new Map<string, number>()
+  private displayedStarLife = new Map<string, { current: number; target: number }>()
   private curveTargets = new Map<string, CurveState>()
   private curveStates = new Map<string, CurveState>()
   private curveVisibility = new Map<string, number>()
@@ -148,7 +154,13 @@ export class GalaxyRenderer {
     const objectIds = new Set(entries.map(([id]) => id))
     this.objectViews.forEach((_view, id) => { if (!objectIds.has(id)) this.objectTargets.delete(id) })
     this.lastObjectPositions.forEach((_position, id) => { if (!objectIds.has(id)) this.lastObjectPositions.delete(id) })
-    for (const [id, object] of entries) this.renderObject(id, object)
+    for (const [id, object] of entries) {
+      this.trackStarLife(id, object)
+      this.renderObject(id, object)
+    }
+    this.knownLife.forEach((_life, id) => { if (!objectIds.has(id)) this.knownLife.delete(id) })
+    this.displayedStarLife.forEach((_life, id) => { if (!objectIds.has(id)) this.displayedStarLife.delete(id) })
+    this.starDeathStartedAt.forEach((_time, id) => { if (!objectIds.has(id)) this.starDeathStartedAt.delete(id) })
     this.reconcileLocalProjectilePreviews()
     this.renderOwnerIndicators(entries)
     this.centerOnAssignedStar(entries)
@@ -376,6 +388,55 @@ export class GalaxyRenderer {
     if (view.children.length === 0 || this.objectIconSubtypes.get(id) !== object.sub_type) {
       this.refreshObjectSymbol(id, view, object.sub_type)
     }
+    this.updateObjectLifeAppearance(id, view, object)
+  }
+
+  private trackStarLife(id: string, object: UniverseObject) {
+    const life = object.life
+    const previousLife = this.knownLife.get(id)
+    if (isStarObject(object) && typeof life === 'number' && life <= 0 && typeof previousLife === 'number' && previousLife > 0) {
+      const position = objectPosition(object) ?? this.objectTargets.get(id)
+      if (position) this.triggerStarDeathEffect(id, position)
+    }
+    if (typeof life === 'number') this.knownLife.set(id, life)
+  }
+
+  private updateObjectLifeAppearance(id: string, view: Container, object: UniverseObject) {
+    if (!isStarObject(object)) return
+    const marker = view.children.find((child): child is Graphics => child instanceof Graphics)
+    if (!marker) return
+    const target = lifeFraction(object)
+    const appearance = this.displayedStarLife.get(id) ?? { current: target, target }
+    appearance.target = target
+    this.displayedStarLife.set(id, appearance)
+    this.drawStarLifeAppearance(marker, appearance.current, this.starDeathStartedAt.get(id))
+  }
+
+  private drawStarLifeAppearance(marker: Graphics, life: number, deathStartedAt?: number) {
+    const deathElapsed = deathStartedAt === undefined ? null : (performance.now() - deathStartedAt) / 1000
+    if (deathElapsed !== null && deathElapsed >= 3.82) {
+      drawBlackHoleRemnant(marker)
+      return
+    }
+    // Below 40%, a star swells from its normal 4px marker to 12px and drifts
+    // from white through orange to red. Screen-constant view scaling preserves
+    // that readable warning at every map zoom.
+    const damage = Math.max(0, Math.min(1, (0.4 - life) / 0.4))
+    const flare = deathElapsed === null ? 0 : Math.max(0, 1 - deathElapsed / .75) * 4
+    const radius = 4 + damage * 8 + flare
+    const color = interpolateColor(0xf2f7ff, 0xff3d3d, damage)
+    marker.clear().circle(0, 0, radius).fill({ color })
+    marker.alpha = 1
+  }
+
+  private triggerStarDeathEffect(id: string, position: Position) {
+    const existing = this.starDeathEffects.get(id)
+    if (existing) existing.view.destroy()
+    const view = new Graphics()
+    this.hitEffects.addChild(view)
+    const startedAt = performance.now()
+    this.starDeathStartedAt.set(id, startedAt)
+    this.starDeathEffects.set(id, { view, position: { ...position }, startedAt })
   }
 
   private renderOwnerIndicators(entries: [string, UniverseObject][]) {
@@ -611,6 +672,17 @@ export class GalaxyRenderer {
       }
     })
 
+    // Life changes arrive as discrete Firebase values; ease the visual state
+    // every rendered frame so a star's colour and size never jump.
+    this.displayedStarLife.forEach((appearance, id) => {
+      appearance.current += (appearance.target - appearance.current) * (1 - Math.exp(-4.5 * delta))
+      if (Math.abs(appearance.target - appearance.current) < .001) appearance.current = appearance.target
+      const view = this.objectViews.get(id)
+      const object = this.predictionObjects[id]
+      const marker = view?.children.find((child): child is Graphics => child instanceof Graphics)
+      if (object && isStarObject(object) && marker) this.drawStarLifeAppearance(marker, appearance.current, this.starDeathStartedAt.get(id))
+    })
+
     this.localProjectilePreviews.forEach((preview, id) => {
       const elapsed = Math.max(0, simulationTime - preview.firedAt)
       const position = preview.stoppedPosition ?? {
@@ -623,7 +695,16 @@ export class GalaxyRenderer {
         this.localProjectilePreviews.delete(id)
         return
       }
-      const hit = !preview.pendingHit && this.detectLocalProjectilePreviewHit(id, preview, position, simulationTime)
+      // A locally named shot may contact something before Flask returns its
+      // permanent projectile ID. Keep both layers hidden while it waits to be
+      // promoted; otherwise the next animation frame restores rangeView.alpha
+      // and leaves a moving blast circle after the dot has vanished.
+      if (preview.pendingHit) {
+        preview.view.alpha = 0
+        preview.rangeView.alpha = 0
+        return
+      }
+      const hit = this.detectLocalProjectilePreviewHit(id, preview, position, simulationTime)
       if (hit) {
         if (id.startsWith('local-projectile-')) {
           preview.pendingHit = hit
@@ -676,6 +757,19 @@ export class GalaxyRenderer {
       effect.view.position.copyFrom(target.position)
       effect.view.scale.set((1 / zoom) * (1 + progress * 0.65))
       effect.view.alpha = Math.max(0, 1 - progress) * target.alpha
+    })
+
+    this.starDeathEffects.forEach((effect, id) => {
+      const elapsed = (now - effect.startedAt) / 1000
+      if (elapsed > 3.9) {
+        effect.view.destroy()
+        this.starDeathEffects.delete(id)
+        return
+      }
+      const maxRadius = Math.hypot(this.host.clientWidth, this.host.clientHeight) / zoom
+      drawStarDeathShockwaves(effect.view, elapsed, maxRadius)
+      effect.view.position.set(effect.position.x, effect.position.y)
+      effect.view.alpha = 1
     })
 
     this.curveViews.forEach((view, id) => {
@@ -1087,11 +1181,15 @@ function lifeFraction(object: UniverseObject | undefined) {
   // Existing universes predate max_life. Keep their health rings useful while
   // generated objects carry the authoritative max_life field going forward.
   const maxLife = object?.max_life
-    ?? (object?.sub_type === 'STAR' || object?.sub_type === 'DEAD_STAR' ? 1000 : object?.type === 'ARTIFICIAL' ? 200 : undefined)
+    ?? (object?.type === 'NATURAL' ? 1000 : object?.type === 'ARTIFICIAL' ? 200 : undefined)
   if (typeof life !== 'number' || typeof maxLife !== 'number' || !Number.isFinite(life) || !Number.isFinite(maxLife) || maxLife <= 0) {
     return 1
   }
   return Math.max(0, Math.min(1, life / maxLife))
+}
+
+function isStarObject(object: UniverseObject) {
+  return object.type === 'NATURAL' && object.sub_type !== 'DEAD_STAR'
 }
 
 function drawOwnershipRing(view: Graphics, isOwned: boolean, fraction: number) {
@@ -1104,6 +1202,44 @@ function drawOwnershipRing(view: Graphics, isOwned: boolean, fraction: number) {
   if (fraction <= 0) return
   view.arc(0, 0, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fraction)
     .stroke({ color: lifeColor, width: 2, alpha: 1, pixelLine: true })
+}
+
+function drawStarDeathShockwaves(view: Graphics, elapsed: number, screenRadius: number) {
+  view.clear()
+  // A hot core flash makes the transition from swollen red star to remnant
+  // feel energetic before the larger rings take over.
+  const flash = Math.max(0, 1 - elapsed / .72)
+  if (flash > 0) {
+    view.circle(0, 0, 18 + (1 - flash) * 95)
+      .fill({ color: 0xff5a32, alpha: flash * .18 })
+    view.circle(0, 0, 10 + (1 - flash) * 42)
+      .stroke({ color: 0xffb13d, width: 2.8, alpha: flash, pixelLine: true })
+  }
+  for (let index = 0; index < STAR_DEATH_WAVE_STARTS.length; index += 1) {
+    const progress = Math.max(0, Math.min(1, (elapsed - STAR_DEATH_WAVE_STARTS[index]) / STAR_DEATH_WAVE_DURATIONS[index]))
+    if (progress <= 0 || progress >= 1) continue
+    const radius = index === 3 ? screenRadius : STAR_DEATH_WAVE_RADII[index]
+    view.circle(0, 0, 4 + radius * progress)
+      .stroke({ color: index === 3 ? 0xff7548 : 0xff3f3f, width: index === 3 ? 2.4 : 1.8, alpha: 1 - progress, pixelLine: true })
+  }
+}
+
+function drawBlackHoleRemnant(marker: Graphics) {
+  marker.clear()
+  // Broad low-alpha halos give the compact remnant an orange glow without
+  // hiding its characteristic black centre.
+  marker.circle(0, 0, 16).stroke({ color: 0xff6b25, width: 1.5, alpha: .16, pixelLine: true })
+  marker.circle(0, 0, 12).stroke({ color: 0xff8a2e, width: 2, alpha: .35, pixelLine: true })
+  marker.circle(0, 0, 8).fill({ color: 0x000000, alpha: 1 })
+  marker.circle(0, 0, 8).stroke({ color: 0xffa23d, width: 3.4, alpha: 1, pixelLine: true })
+}
+
+function interpolateColor(from: number, to: number, progress: number) {
+  const amount = Math.max(0, Math.min(1, progress))
+  const red = Math.round(((from >> 16) & 0xff) + (((to >> 16) & 0xff) - ((from >> 16) & 0xff)) * amount)
+  const green = Math.round(((from >> 8) & 0xff) + (((to >> 8) & 0xff) - ((from >> 8) & 0xff)) * amount)
+  const blue = Math.round((from & 0xff) + ((to & 0xff) - (from & 0xff)) * amount)
+  return (red << 16) | (green << 8) | blue
 }
 
 function collisionRadius(first: UniverseObject, second: UniverseObject) {

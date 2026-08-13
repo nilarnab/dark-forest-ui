@@ -319,32 +319,19 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
   }
 
   async function verifyPredictedHit(projectileId: string, targetId: string, hitTime: number, clientDistance: number) {
-    addTransientMessage('VERIFYING HIT · CONTACTING FLASK', 'verification')
-    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    // The client is authoritative for a predicted projectile contact. Commit
+    // its visual result immediately; Flask only persists the reported hit.
+    renderer.current?.resolveHitVerification(projectileId, 'confirmed')
     try {
       const apiUrl = import.meta.env.VITE_SIMULATION_API_URL ?? 'http://localhost:5000'
-      const response = await fetch(`${apiUrl}/universes/${encodeURIComponent(universeId)}/projectiles/${encodeURIComponent(projectileId)}/verify-hit`, {
+      await fetch(`${apiUrl}/universes/${encodeURIComponent(universeId)}/projectiles/${encodeURIComponent(projectileId)}/verify-hit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target_id: targetId, hit_time: hitTime, client_distance: clientDistance }),
       })
-      const body = await response.json() as {
-        ok?: boolean
-        status?: 'confirmed' | 'rejected' | 'pending'
-        diagnostics?: { client_hit_time?: number; client_distance?: number; flask_evaluated_at?: number; flask_distance?: number; hit_radius?: number }
-      }
-      const status = response.ok && body.ok && body.status ? body.status : 'pending'
-      if (status === 'confirmed') {
-        addTransientMessage('HIT VERIFIED · FLASK CONFIRMED', 'verification')
-      } else if (status === 'pending') {
-        addTransientMessage('HIT VERIFICATION · PENDING', 'verification')
-      } else if (body.diagnostics) {
-        addTransientMessage(formatHitDifference(body.diagnostics), 'correction')
-      }
-      renderer.current?.resolveHitVerification(projectileId, status)
     } catch {
-      addTransientMessage('HIT VERIFICATION · RETRYING', 'verification')
-      renderer.current?.resolveHitVerification(projectileId, 'pending')
+      // The next Firebase update remains authoritative for persistent state;
+      // never roll back the player's immediate confirmed-hit feedback.
     }
   }
 
