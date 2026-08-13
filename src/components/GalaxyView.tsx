@@ -17,9 +17,15 @@ type TransientMessage = {
 export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
   const host = useRef<HTMLDivElement>(null)
   const renderer = useRef<GalaxyRenderer | null>(null)
+  const rendererReady = useRef(false)
   const dispatch = useDispatch()
   const universe = useSelector((state: RootState) => state.universe.universe)
   const selectedObjectId = useSelector((state: RootState) => state.universe.selectedObjectId)
+  // Firebase can deliver the first universe snapshot while Pixi is still
+  // loading. Keep the current scene outside the initialization closure so
+  // startup always paints the latest snapshot, rather than its initial null.
+  const latestScene = useRef({ universe, selectedObjectId })
+  latestScene.current = { universe, selectedObjectId }
   const [transferTargetId, setTransferTargetId] = useState<string | null>(null)
   const [transferRadius, setTransferRadius] = useState(100)
   const [transferStatus, setTransferStatus] = useState<string | null>(null)
@@ -49,6 +55,7 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
 
   useEffect(() => {
     if (!host.current) return
+    let mounted = true
     const galaxy = new GalaxyRenderer(
       host.current,
       (id) => {
@@ -107,16 +114,23 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
     )
     renderer.current = galaxy
     void galaxy.initialize().then((ready) => {
-      if (ready) galaxy.render(universe, selectedObjectId)
+      if (!ready || !mounted) return
+      rendererReady.current = true
+      const scene = latestScene.current
+      galaxy.render(scene.universe, scene.selectedObjectId)
     })
     return () => {
+      mounted = false
+      rendererReady.current = false
       messageTimers.current.forEach((timer) => window.clearTimeout(timer))
       messageTimers.current.clear()
       galaxy.destroy()
     }
   }, [dispatch])
 
-  useEffect(() => { renderer.current?.render(universe, selectedObjectId) }, [universe, selectedObjectId])
+  useEffect(() => {
+    if (rendererReady.current) renderer.current?.render(universe, selectedObjectId)
+  }, [universe, selectedObjectId])
   useEffect(() => { renderer.current?.setOwnerUsername(currentUsername) }, [currentUsername])
   useEffect(() => {
     setTransferTargetId(null)
