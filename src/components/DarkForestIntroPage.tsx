@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { playUiClick } from '../audio/sfx'
-import { StarAssaultSequence } from './StarAssaultSequence'
+import { StarAssaultSequence, type StarAssaultSequenceHandle } from './StarAssaultSequence'
 
 type Emphasis = { words: string[]; delay: number }
 type ScriptLine = { text: string; typingDuration: number; emphasis?: Emphasis[] }
@@ -43,6 +43,7 @@ export function DarkForestIntroPage() {
   const [now, setNow] = useState(0)
   const [finale, setFinale] = useState(false)
   const audioRef = useRef<HTMLAudioElement>(null)
+  const assaultRef = useRef<StarAssaultSequenceHandle>(null)
   const soundGateTimer = useRef<number | null>(null)
 
   useEffect(() => {
@@ -74,6 +75,7 @@ export function DarkForestIntroPage() {
 
   function begin() {
     playUiClick()
+    assaultRef.current?.unlockImpactAudio()
     setSoundGate(true)
     const audio = audioRef.current
     if (audio) {
@@ -149,7 +151,7 @@ export function DarkForestIntroPage() {
 
   return (
     <main className="dark-forest-intro">
-      <StarAssaultSequence step={started ? step : -1} typingProgress={started ? typingProgress : 0} muted={muted} />
+      <StarAssaultSequence ref={assaultRef} step={started ? step : -1} typingProgress={started ? typingProgress : 0} muted={muted} />
       <audio ref={audioRef} src="/audio/ambiant-cinematic-drone-main.mp3" preload="auto" loop />
       <button className="dark-forest-mute" type="button" onClick={toggleMute}>{muted ? 'UNMUTE' : 'MUTE'}</button>
       {started && !finale && <button className="dark-forest-next dark-forest-back" type="button" onClick={goBack}>&lt; BACK</button>}

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react'
 import { STAR_DEATH_WAVE_DURATIONS, STAR_DEATH_WAVE_RADII, STAR_DEATH_WAVE_STARTS } from '../animations/starDeath'
 
 export type StarAssaultSequenceProps = {
@@ -6,6 +6,14 @@ export type StarAssaultSequenceProps = {
   step: number
   typingProgress: number
   muted?: boolean
+}
+
+export type StarAssaultSequenceHandle = {
+  /**
+   * Mobile browsers only permit a new audio element to start from a real tap.
+   * Prime this clip during START, then reset it for the timed impact later.
+   */
+  unlockImpactAudio: () => void
 }
 
 type Star = { x: number; y: number; appearAfter: number; radarDisappearAfter: number; shotDelay: number }
@@ -25,7 +33,7 @@ function clamp(value: number) { return Math.min(1, Math.max(0, value)) }
  * deliberately minimal today; a later game integration can supply positions
  * and object IDs while keeping the attack and death choreography intact.
  */
-export function StarAssaultSequence({ step, typingProgress, muted = false }: StarAssaultSequenceProps) {
+export const StarAssaultSequence = forwardRef<StarAssaultSequenceHandle, StarAssaultSequenceProps>(function StarAssaultSequence({ step, typingProgress, muted = false }, ref) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const impactAudioRef = useRef<HTMLAudioElement | null>(null)
   const storyRef = useRef({ step, typingProgress })
@@ -39,6 +47,26 @@ export function StarAssaultSequence({ step, typingProgress, muted = false }: Sta
     impactAudioRef.current = audio
     return () => { audio.pause(); impactAudioRef.current = null }
   }, [])
+
+  useImperativeHandle(ref, () => ({
+    unlockImpactAudio() {
+      const impact = impactAudioRef.current
+      if (!impact) return
+      // Calling play() here happens synchronously inside the user's START
+      // gesture. This grants later timed playback permission on iOS/Safari.
+      const originalVolume = impact.volume
+      impact.currentTime = 0
+      impact.muted = false
+      impact.volume = 0
+      void impact.play().then(() => {
+        impact.pause()
+        impact.currentTime = 0
+        impact.volume = originalVolume
+      }).catch(() => {
+        impact.volume = originalVolume
+      })
+    },
+  }), [])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -202,4 +230,4 @@ export function StarAssaultSequence({ step, typingProgress, muted = false }: Sta
   }, [])
 
   return <canvas ref={canvasRef} className="star-assault-sequence" aria-hidden="true" />
-}
+})
