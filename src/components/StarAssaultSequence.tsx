@@ -43,7 +43,8 @@ export const StarAssaultSequence = forwardRef<StarAssaultSequenceHandle, StarAss
   useEffect(() => {
     const audio = new Audio('/audio/impaktor-deep-2-low-end-cinematic-impact.mp3')
     audio.preload = 'auto'
-    audio.volume = .78
+    // 0.78 × 1.5 exceeds the browser maximum; use full-scale output instead.
+    audio.volume = 1
     impactAudioRef.current = audio
     return () => { audio.pause(); impactAudioRef.current = null }
   }, [])
