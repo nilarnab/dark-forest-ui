@@ -2,10 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { playUiClick } from '../audio/sfx'
 
 const tracks = [
-  { title: 'lo-fi space', artist: 'Music-for-Videos', src: 'https://cdn.pixabay.com/audio/2024/01/23/audio_fc7f78c2a0.mp3' },
-  { title: 'Neptune / Lofi', artist: 'LofCosmos', src: 'https://cdn.pixabay.com/audio/2025/04/10/audio_6724301322.mp3' },
-  { title: 'Subspace Daydream', artist: 'RubyZephyr', src: 'https://cdn.pixabay.com/audio/2026/02/25/audio_52674f8230.mp3' },
-  { title: 'Night Whispers / Lofi', artist: 'LofCosmos', src: 'https://cdn.pixabay.com/audio/2025/03/17/audio_295ad9df2d.mp3' },
+  { title: 'Ambiant Cinematic Drone', artist: 'Dark Forest', src: '/audio/ambiant-cinematic-drone-main.mp3' },
 ]
 
 export function MusicPlayer() {
@@ -93,7 +90,7 @@ export function MusicPlayer() {
 
   return (
     <div className="music-player" aria-label="Background music player">
-      <audio ref={audio} src={track.src} preload="none" onEnded={nextTrack} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} />
+      <audio ref={audio} src={track.src} preload="auto" loop onEnded={nextTrack} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} />
       <button type="button" className="music-play" onClick={() => { playUiClick(); void togglePlayback() }} aria-label={playing ? 'Pause music' : 'Play music'}>
         {playing ? 'Ⅱ' : '▶'}
       </button>

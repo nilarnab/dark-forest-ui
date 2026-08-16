@@ -51,7 +51,25 @@ export interface AttachedObject {
 }
 
 export interface Universe {
+  name?: string
   active?: boolean
+  career?: boolean
+  darkforest?: boolean
+  career_level?: number
+  career_state?: {
+    current_step?: string
+    status?: string
+    tutorial_step?: number
+    tutorial_intermission?: boolean
+    tutorial_intermission_started_at_ms?: number
+    enemy_contact_tutorial_step?: number
+    enemy_contact_ship_id?: string
+    enemy_contact_star_id?: string
+    enemy_contact_expected_at?: number
+    enemy_contact_progress_starts_at?: number
+    combat_tutorial_step?: number
+  }
+  participants?: Record<string, { type?: 'HUMAN' | 'AGENT' | string }>
   objects?: Record<string, UniverseObject>
   time?: number
   time_updated_at_ms?: number

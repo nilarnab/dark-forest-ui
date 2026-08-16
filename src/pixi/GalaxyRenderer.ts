@@ -5,11 +5,12 @@ import { STAR_DEATH_WAVE_DURATIONS, STAR_DEATH_WAVE_RADII, STAR_DEATH_WAVE_START
 
 type Position = { x: number; y: number }
 type TransferArc = { centre: Position; basisU: Position; basisV: Position; phaseStart: number; phaseEnd: number }
-type CurveState = { x: number; y: number; a: number; b: number; rotation: number; dotted: boolean; transferArc?: TransferArc }
+type CurveState = { x: number; y: number; a: number; b: number; rotation: number; dotted: boolean; hostile?: boolean; transferArc?: TransferArc }
 type PendingPredictedHit = { targetId: string; predictedAt: number; clientDistance: number; verificationRequested?: boolean }
 type LocalProjectilePreview = { view: Graphics; rangeView: Graphics; start: Position; rotation: number; speed: number; firedAt: number; expiresAt: number; sourceId: string; hitRadius: number; lastPosition: Position; lastSimulationTime: number; pendingHit?: { targetId: string; hitTime: number; clientDistance: number }; stoppedPosition?: Position }
-type ProjectileFiredEvent = { projectile_id: string; source_id: string; start_location: Position; rotation: number; velocity: number; hit_radius: number; fired_at: number; range: number }
 type OpeningCamera = { startedAt: number; startZoom: number; endZoom: number; startFocus: Position; endFocus: Position }
+type CameraFrame = { zoom: number; focus: Position }
+type TutorialCameraReturn = { startedAt: number; startZoom: number; endZoom: number; startPosition: Position; endPosition: Position }
 type StarDeathEffect = { view: Graphics; position: Position; startedAt: number }
 
 const subtypeIconUrls: Record<string, string> = {
@@ -67,13 +68,24 @@ export class GalaxyRenderer {
   private disposed = false
   private targetZoom = 1
   private openingCamera: OpeningCamera | null = null
+  private tutorialCameraHome: CameraFrame | null = null
+  private tutorialCameraReturn: TutorialCameraReturn | null = null
   private zoomAnchor: { screen: Position; world: Position } | null = null
   private lastFrameTime = 0
   private predictionUniverse: Universe | null = null
   private predictionObjects: Record<string, UniverseObject> = {}
+  private darkForest = false
+  private visibleObjectIds = new Set<string>()
+  // Detection controls intelligence/UI disclosure. Visibility additionally
+  // includes all stars: in a Dark Forest you can see a star's light without
+  // learning who owns it or how damaged it is.
+  private detectedObjectIds = new Set<string>()
   private localSimulationTime = 0
   private localSimulationUpdatedAt = 0
   private simulationPaused = true
+  private pauseReconciliationUntil = 0
+  private tutorialRadarMuted = false
+  private tutorialRadarHighlighted = false
   private dragStart = { x: 0, y: 0, worldX: 0, worldY: 0 }
   private previewTargetId: string | null = null
   private previewRadius = 0
@@ -137,11 +149,18 @@ export class GalaxyRenderer {
     let incomingTime: number | null = null
     if (universe !== this.predictionUniverse) {
       const receivedAt = performance.now()
-      const currentLocalTime = this.localSimulationNow(receivedAt)
+      // While a tutorial has paused the universe, wall-clock time must not
+      // be folded back into the simulation when the next active snapshot
+      // arrives. `currentSimulationTime` returns the frozen checkpoint in
+      // that case; `localSimulationNow` would incorrectly catch up through
+      // the entire tutorial and visibly jump a transfer to its destination.
+      const currentLocalTime = this.currentSimulationTime(receivedAt)
       const active = universe?.active === true
+      const wasPaused = this.simulationPaused
       incomingTime = active ? estimatedUniverseTime(universe) : (universe?.time ?? 0)
       this.predictionUniverse = universe
       this.predictionObjects = universe?.objects ?? {}
+      this.darkForest = universe?.darkforest === true
       // An inactive universe must display its stored state without advancing
       // its local prediction clock. Active snapshots remain lower bounds.
       this.localSimulationTime = !active || this.localSimulationUpdatedAt === 0
@@ -149,32 +168,46 @@ export class GalaxyRenderer {
         : Math.max(currentLocalTime, incomingTime)
       this.localSimulationUpdatedAt = receivedAt
       this.simulationPaused = !active
+      // The server pause checkpoint can differ from the last locally
+      // predicted frame by a few network milliseconds. Reconcile that small
+      // correction gently instead of making an orbit appear to step backward.
+      if (!active && !wasPaused) this.pauseReconciliationUntil = receivedAt + 650
     }
-    const entries = Object.entries(universe?.objects ?? {})
+    const allObjects = universe?.objects ?? {}
+    const entries = Object.entries(allObjects)
+    this.visibleObjectIds = this.calculateVisibleObjectIds(this.currentSimulationTime(performance.now()))
+    const visibleEntries = entries.filter(([id]) => this.visibleObjectIds.has(id))
+    const visibleObjects = Object.fromEntries(visibleEntries)
     const objectIds = new Set(entries.map(([id]) => id))
     this.objectViews.forEach((_view, id) => { if (!objectIds.has(id)) this.objectTargets.delete(id) })
     this.lastObjectPositions.forEach((_position, id) => { if (!objectIds.has(id)) this.lastObjectPositions.delete(id) })
-    for (const [id, object] of entries) {
+    for (const [id, object] of visibleEntries) {
       this.trackStarLife(id, object)
       this.renderObject(id, object)
     }
+    this.objectViews.forEach((view, id) => { view.eventMode = this.visibleObjectIds.has(id) ? 'static' : 'none' })
     this.knownLife.forEach((_life, id) => { if (!objectIds.has(id)) this.knownLife.delete(id) })
     this.displayedStarLife.forEach((_life, id) => { if (!objectIds.has(id)) this.displayedStarLife.delete(id) })
     this.starDeathStartedAt.forEach((_time, id) => { if (!objectIds.has(id)) this.starDeathStartedAt.delete(id) })
     this.reconcileLocalProjectilePreviews()
-    this.renderOwnerIndicators(entries)
+    this.renderOwnerIndicators(visibleEntries)
     this.centerOnAssignedStar(entries)
     if (this.simulationPaused) {
+      // In event-driven mode Firebase locations are only checkpoints.  A
+      // tutorial can pause between writes, so using `object.location` here
+      // would visibly rewind an orbit to its last stored position. Freeze at
+      // the analytic position for the exact shared paused time instead.
+      const frozenPositions = predictPositions(this.predictionObjects, this.localSimulationTime)
       for (const [id, object] of entries) {
-        const position = objectPosition(object)
+        const position = frozenPositions.get(id) ?? objectPosition(object)
         if (position) this.objectTargets.set(id, position)
       }
     }
-    this.renderAttachedObjects(universe?.objects ?? {})
-    this.renderProjectileBlastRanges(universe?.objects ?? {})
-    this.renderCurves(universe?.objects ?? {})
+    this.renderAttachedObjects(visibleObjects)
+    this.renderProjectileBlastRanges(visibleObjects)
+    this.renderCurves(visibleObjects)
     this.selectedId = selectedId
-    this.renderSelection(universe?.objects ?? {})
+    this.renderSelection(visibleObjects)
     this.drawTransferPreview()
   }
 
@@ -265,33 +298,6 @@ export class GalaxyRenderer {
     this.localProjectilePreviews.delete(id)
   }
 
-  receiveProjectileFired(event: ProjectileFiredEvent) {
-    if (this.localProjectilePreviews.has(event.projectile_id)) return
-    const localMatch = [...this.localProjectilePreviews.entries()].find(([localId, preview]) => (
-      localId.startsWith('local-projectile-')
-      && preview.sourceId === event.source_id
-      && Math.abs(preview.firedAt - event.fired_at) <= 1
-    ))
-    if (localMatch) {
-      this.promoteLocalProjectile(localMatch[0], event.projectile_id, event.fired_at)
-      return
-    }
-    this.launchLocalProjectile(
-      event.projectile_id,
-      event.source_id,
-      event.start_location,
-      event.rotation,
-      event.velocity,
-      event.hit_radius,
-      event.fired_at,
-      event.range,
-    )
-  }
-
-  receiveProjectileCancelled(projectileId: string) {
-    this.discardLocalProjectile(projectileId)
-  }
-
   private reconcileLocalProjectilePreviews() {
     const authoritativeProjectiles = Object.entries(this.predictionObjects).filter(([, object]) => object.sub_type === 'PROJECTILE')
     for (const [localId, preview] of this.localProjectilePreviews) {
@@ -310,6 +316,113 @@ export class GalaxyRenderer {
     this.ownerUsername = username
     this.renderOwnerIndicators(Object.entries(this.predictionObjects))
     this.centerOnAssignedStar(Object.entries(this.predictionObjects))
+    this.render(this.predictionUniverse, this.selectedId)
+  }
+
+  setTutorialRadarMuted(muted: boolean) {
+    this.tutorialRadarMuted = muted
+  }
+
+  setTutorialRadarHighlighted(highlighted: boolean) {
+    this.tutorialRadarHighlighted = highlighted
+  }
+
+  /** Restore the authored opening frame whenever a tutorial takes control. */
+  restoreTutorialCamera() {
+    const frame = this.tutorialCameraHome
+    if (!frame || !this.app) return
+    const endPosition = {
+      x: this.host.clientWidth / 2 - frame.focus.x * frame.zoom,
+      y: this.host.clientHeight / 2 - frame.focus.y * frame.zoom,
+    }
+    this.openingCamera = null
+    this.zoomAnchor = null
+    this.tutorialCameraReturn = {
+      startedAt: performance.now(),
+      startZoom: this.world.scale.x,
+      endZoom: frame.zoom,
+      startPosition: { x: this.world.x, y: this.world.y },
+      endPosition,
+    }
+  }
+
+  getObjectTutorialBounds(id: string) {
+    const position = this.objectTargets.get(id) ?? objectPosition(this.predictionObjects[id] ?? {})
+    if (!position || !this.app) return null
+    const screen = this.world.toGlobal(position)
+    const bounds = this.app.canvas.getBoundingClientRect()
+    const size = 48
+    return { left: bounds.left + screen.x - size / 2, top: bounds.top + screen.y - size / 2, width: size, height: size }
+  }
+
+  private calculateDetectedObjectIds(simulationTime: number) {
+    const entries = Object.entries(this.predictionObjects)
+    if (!this.darkForest || !this.ownerUsername) return new Set(entries.map(([id]) => id))
+    const positions = predictPositions(this.predictionObjects, simulationTime)
+    const positionFor = (id: string, object: UniverseObject) => positions.get(id) ?? this.objectTargets.get(id) ?? objectPosition(object)
+    const radarSources = entries.flatMap(([id, object]) => {
+      if (object.owner !== this.ownerUsername) return []
+      const position = positionFor(id, object)
+      if (!position) return []
+      return Object.values(object.objects ?? {})
+        .filter((attachment) => attachment.type === 'RADAR' && typeof attachment.radius === 'number' && attachment.radius > 0)
+        .map((attachment) => ({ position, radius: attachment.radius! }))
+    })
+    const detected = new Set<string>()
+    for (const [id, object] of entries) {
+      if (object.owner === this.ownerUsername || object.source_objectid && this.predictionObjects[object.source_objectid]?.owner === this.ownerUsername) {
+        detected.add(id)
+        continue
+      }
+      const position = positionFor(id, object)
+      if (position && radarSources.some((radar) => Math.hypot(position.x - radar.position.x, position.y - radar.position.y) <= radar.radius)) detected.add(id)
+    }
+    return detected
+  }
+
+  private calculateVisibleObjectIds(simulationTime: number) {
+    const detected = this.calculateDetectedObjectIds(simulationTime)
+    this.detectedObjectIds = detected
+    if (!this.darkForest || !this.ownerUsername) return detected
+    return new Set([
+      ...detected,
+      ...Object.entries(this.predictionObjects)
+        .filter(([, object]) => isStarObject(object))
+        .map(([id]) => id),
+    ])
+  }
+
+  private refreshDarkForestVisibility(simulationTime: number) {
+    if (!this.darkForest || !this.ownerUsername) return
+    const previousDetected = new Set(this.detectedObjectIds)
+    const next = this.calculateVisibleObjectIds(simulationTime)
+    let changed = next.size !== this.visibleObjectIds.size
+    if (!changed) next.forEach((id) => { if (!this.visibleObjectIds.has(id)) changed = true })
+    if (!changed && previousDetected.size !== this.detectedObjectIds.size) changed = true
+    if (!changed) this.detectedObjectIds.forEach((id) => { if (!previousDetected.has(id)) changed = true })
+    if (!changed) return
+    this.visibleObjectIds = next
+    const visibleEntries = Object.entries(this.predictionObjects).filter(([id]) => next.has(id))
+    // Stars can remain visibly present while their radar intelligence changes.
+    // Re-render existing views too, so owner/life rings appear at detection.
+    for (const [id, object] of visibleEntries) this.renderObject(id, object)
+    this.objectViews.forEach((view, id) => { view.eventMode = next.has(id) ? 'static' : 'none' })
+    const visibleObjects = Object.fromEntries(visibleEntries)
+    this.renderOwnerIndicators(visibleEntries)
+    this.renderAttachedObjects(visibleObjects)
+    this.renderProjectileBlastRanges(visibleObjects)
+    this.renderCurves(visibleObjects)
+    this.renderSelection(visibleObjects)
+  }
+
+  private refreshTimedCurves() {
+    // Curve validity is based on the local shared clock, not a new Firebase
+    // snapshot. Re-evaluate it every frame so a planned dotted orbit becomes
+    // solid exactly at valid_from, even while the player does not click.
+    const visibleObjects = Object.fromEntries(
+      Object.entries(this.predictionObjects).filter(([id]) => this.visibleObjectIds.has(id)),
+    )
+    this.renderCurves(visibleObjects)
   }
 
   flashHit(targetId: string, color = 0xffcf70) {
@@ -392,6 +505,7 @@ export class GalaxyRenderer {
   }
 
   private trackStarLife(id: string, object: UniverseObject) {
+    if (this.darkForest && object.owner !== this.ownerUsername && !this.detectedObjectIds.has(id)) return
     const life = object.life
     const previousLife = this.knownLife.get(id)
     if (isStarObject(object) && typeof life === 'number' && life <= 0 && typeof previousLife === 'number' && previousLife > 0) {
@@ -405,6 +519,12 @@ export class GalaxyRenderer {
     if (!isStarObject(object)) return
     const marker = view.children.find((child): child is Graphics => child instanceof Graphics)
     if (!marker) return
+    if (this.darkForest && object.owner !== this.ownerUsername && !this.detectedObjectIds.has(id)) {
+      // An unscanned star is an anonymous white light—not a health readout.
+      marker.clear().circle(0, 0, 4).fill({ color: 0xf2f7ff })
+      marker.alpha = 1
+      return
+    }
     const target = lifeFraction(object)
     const appearance = this.displayedStarLife.get(id) ?? { current: target, target }
     appearance.target = target
@@ -443,7 +563,7 @@ export class GalaxyRenderer {
     const expected = new Set(
       this.ownerUsername
         ? entries
-          .filter(([, object]) => typeof object.owner === 'string' && object.sub_type !== 'PROJECTILE')
+          .filter(([id, object]) => typeof object.owner === 'string' && object.sub_type !== 'PROJECTILE' && (!this.darkForest || this.detectedObjectIds.has(id)))
           .map(([id]) => id)
         : [],
     )
@@ -482,9 +602,11 @@ export class GalaxyRenderer {
       this.host.clientHeight / 2 - position.y * zoom,
     )
     if (finalFrame) {
+      this.tutorialCameraHome = { zoom: finalFrame.zoom, focus: finalFrame.focus }
       this.openingCamera = {
-        // Hold the close assigned-star view before the map reveal begins.
-        startedAt: performance.now() + 3000,
+        // Start close to the assigned star, then immediately open out to a
+        // frame containing every star in the new universe.
+        startedAt: performance.now() + 250,
         startZoom: zoom,
         endZoom: finalFrame.zoom,
         startFocus: position,
@@ -513,10 +635,13 @@ export class GalaxyRenderer {
         // Planned destination curves are dotted only before they become the
         // active trajectory. The old position worker used to persist this
         // cosmetic toggle; event-driven clients derive it from time instead.
+        const hostileContact = this.darkForest && typeof object.owner === 'string' && object.owner !== this.ownerUsername
+        const hostileTransfer = hostileContact && curve.motion_type !== 'ORBIT'
         const target = curveState(focusPosition, {
           ...curve,
-          dotted: Boolean(curve.dotted && (typeof curve.valid_from !== 'number' || curve.valid_from > displayTime)),
+          dotted: hostileTransfer || Boolean(curve.dotted && (typeof curve.valid_from !== 'number' || curve.valid_from > displayTime)),
         })
+        target.hostile = hostileContact
         this.curveTargets.set(id, target)
         let view = this.curveViews.get(id)
         if (!view) {
@@ -534,6 +659,8 @@ export class GalaxyRenderer {
   private renderAttachedObjects(allObjects: Record<string, UniverseObject>) {
     const expected = new Set<string>()
     for (const [ownerId, object] of Object.entries(allObjects)) {
+      // A visible but unscanned star must not reveal its mounted radar range.
+      if (this.darkForest && !this.detectedObjectIds.has(ownerId)) continue
       for (const [attachedId, attached] of Object.entries(object.objects ?? {})) {
         if (attached.type !== 'RADAR' || typeof attached.radius !== 'number' || attached.radius <= 0) continue
         const id = `${ownerId}:${attachedId}`
@@ -608,11 +735,26 @@ export class GalaxyRenderer {
     const now = performance.now()
     const delta = this.lastFrameTime ? Math.min((now - this.lastFrameTime) / 1000, 0.1) : 0
     this.lastFrameTime = now
-    const easing = 1 - Math.exp(-18 * delta)
+    const reconcilingPause = now < this.pauseReconciliationUntil
+    const easing = 1 - Math.exp(-(reconcilingPause ? 6 : 18) * delta)
     const fade = Math.min(1, delta * 4)
 
+    const tutorialReturn = this.tutorialCameraReturn
     const opening = this.openingCamera
-    if (opening) {
+    if (tutorialReturn) {
+      const progress = Math.min(1, Math.max(0, (now - tutorialReturn.startedAt) / 650))
+      const eased = 1 - (1 - progress) ** 3
+      const zoom = tutorialReturn.startZoom + (tutorialReturn.endZoom - tutorialReturn.startZoom) * eased
+      this.world.scale.set(zoom)
+      this.world.position.set(
+        tutorialReturn.startPosition.x + (tutorialReturn.endPosition.x - tutorialReturn.startPosition.x) * eased,
+        tutorialReturn.startPosition.y + (tutorialReturn.endPosition.y - tutorialReturn.startPosition.y) * eased,
+      )
+      if (progress >= 1) {
+        this.targetZoom = tutorialReturn.endZoom
+        this.tutorialCameraReturn = null
+      }
+    } else if (opening) {
       // Same accelerated profile as the intro camera: it starts almost still
       // at the assigned star, then quickly opens out to reveal the map.
       const progress = Math.min(1, Math.max(0, (now - opening.startedAt) / 1000))
@@ -630,7 +772,7 @@ export class GalaxyRenderer {
       const zoom = this.world.scale.x + (this.targetZoom - this.world.scale.x) * easing
       this.world.scale.set(zoom)
     }
-    if (!this.openingCamera && this.zoomAnchor) {
+    if (!this.openingCamera && !this.tutorialCameraReturn && this.zoomAnchor) {
       const zoom = this.world.scale.x
       this.world.position.set(
         this.zoomAnchor.screen.x - this.zoomAnchor.world.x * zoom,
@@ -647,6 +789,8 @@ export class GalaxyRenderer {
       this.detectPredictedHits(positions, simulationTime)
       this.requestDueHitVerifications(simulationTime)
     }
+    this.refreshDarkForestVisibility(simulationTime)
+    this.refreshTimedCurves()
 
     this.objectViews.forEach((view, id) => {
       const target = this.objectTargets.get(id)
@@ -656,6 +800,7 @@ export class GalaxyRenderer {
       // must not replace the client prediction mid-flight or produce a pause
       // while the two representations reconcile.
       const shouldShow = Boolean(target)
+        && this.visibleObjectIds.has(id)
         && !this.localProjectilePreviews.has(id)
         && !this.hiddenProjectiles.has(id)
         && !isExpiredProjectile(object, simulationTime)
@@ -803,7 +948,11 @@ export class GalaxyRenderer {
       view.position.copyFrom(object.position)
       view.alpha = object.alpha
       const radius = this.radarRadii.get(id)
-      if (radius) drawRadarRange(view, radius, rippleProgress(id, now))
+      const enemyRadar = Boolean(owner && this.ownerUsername && this.predictionObjects[owner]?.owner !== this.ownerUsername)
+      const ownedRadar = Boolean(owner && this.predictionObjects[owner]?.owner === this.ownerUsername)
+      const muted = Boolean(this.tutorialRadarMuted && ownedRadar && !enemyRadar)
+      const highlighted = Boolean(this.tutorialRadarHighlighted && ownedRadar && !enemyRadar)
+      if (radius) drawRadarRange(view, radius, rippleProgress(id, now), enemyRadar, muted, highlighted)
     })
 
     this.blastViews.forEach((view, objectId) => {
@@ -1262,6 +1411,7 @@ function objectPosition(object: UniverseObject): Position | null {
 
 function estimatedUniverseTime(universe: Universe | null) {
   const baseTime = universe?.time ?? 0
+  if (universe?.active !== true) return baseTime
   const anchor = universe?.time_updated_at_ms
   if (typeof anchor !== 'number' || !Number.isFinite(anchor)) return baseTime
   return baseTime + Math.max(0, (Date.now() - anchor) / 1000)
@@ -1377,6 +1527,7 @@ function interpolateCurve(current: CurveState, target: CurveState, amount: numbe
     b: current.b + (target.b - current.b) * amount,
     rotation: current.rotation + (target.rotation - current.rotation) * amount,
     dotted: target.dotted,
+    hostile: target.hostile,
     transferArc: target.transferArc,
   }
 }
@@ -1393,7 +1544,7 @@ function drawEllipse(graphics: Graphics, curve: CurveState) {
       if (index === 0) graphics.moveTo(x, y)
       else graphics.lineTo(x, y)
     }
-    graphics.stroke({ color: 0x42637f, width: 1, alpha: 0.9, pixelLine: true })
+    graphics.stroke({ color: curve.hostile ? 0xff5d5d : 0x42637f, width: 1, alpha: 0.9, pixelLine: true })
     graphics.position.set(0, 0)
     graphics.rotation = 0
     return
@@ -1406,7 +1557,7 @@ function drawEllipse(graphics: Graphics, curve: CurveState) {
       graphics.moveTo(Math.cos(start) * curve.a, Math.sin(start) * curve.b)
         .lineTo(Math.cos(end) * curve.a, Math.sin(end) * curve.b)
     }
-    graphics.stroke({ color: 0x70f0ab, width: 1, alpha: 0.9, pixelLine: true })
+    graphics.stroke({ color: curve.hostile ? 0xff5d5d : 0x70f0ab, width: 1, alpha: 0.9, pixelLine: true })
   } else {
     graphics.ellipse(0, 0, curve.a, curve.b).stroke({ color: 0x42637f, width: 1, alpha: 0.8, pixelLine: true })
   }
@@ -1414,15 +1565,17 @@ function drawEllipse(graphics: Graphics, curve: CurveState) {
   graphics.rotation = curve.rotation
 }
 
-function drawRadarRange(graphics: Graphics, radius: number, ripple: number) {
+function drawRadarRange(graphics: Graphics, radius: number, ripple: number, enemy = false, muted = false, highlighted = false) {
+  const color = muted ? 0x95a3ad : enemy ? 0xff5d5d : 0x42ff79
+  const rippleColor = muted ? 0xe2e9ee : enemy ? 0xffaaa4 : 0x9cffb5
+  // The tutorial radar callout should pulse deliberately rather than race:
+  // three half-waves per sweep, half the previous flashing frequency.
+  const highlightPulse = highlighted ? 0.55 + Math.abs(Math.sin(ripple * Math.PI * 3)) * 0.45 : 0
   graphics.clear()
     .circle(0, 0, radius)
-    .fill({ color: 0x42ff79, alpha: 0.08 })
-    .stroke({ color: 0x42ff79, width: 1, alpha: 0.55, pixelLine: true })
-    .circle(0, 0, radius * 0.5)
-    .stroke({ color: 0x42ff79, width: 1, alpha: 0.2, pixelLine: true })
+    .fill({ color, alpha: highlighted ? 0.1 + highlightPulse * 0.1 : 0.08 })
     .circle(0, 0, radius * ripple)
-    .stroke({ color: 0x9cffb5, width: 1, alpha: (1 - ripple) * 0.7, pixelLine: true })
+    .stroke({ color: rippleColor, width: highlighted ? 2 : 1, alpha: (1 - ripple) * (highlighted ? 1 : 0.7), pixelLine: true })
 }
 
 function drawBlastRange(graphics: Graphics, radius: number, flicker: number) {

@@ -10,7 +10,8 @@ import { UniversePage } from './components/UniversePage'
 import { CreateUniversePage } from './components/CreateUniversePage'
 import { DarkForestIntroPage } from './components/DarkForestIntroPage'
 import { currentUniverseId } from './firebase/listener'
-import { cachedUsername } from './session'
+import { cachedPlayerId } from './session'
+import { LevelOneInvitePage } from './components/LevelOneInvitePage'
 
 export default function App() {
   const dispatch = useDispatch<AppDispatch>()
@@ -19,14 +20,15 @@ export default function App() {
   const isDarkForestIntro = window.location.pathname === '/intro/darkforest'
   const isUniverseSelection = window.location.pathname === '/intro/universe'
   const isUniverseCreation = window.location.pathname === '/intro/universe/new'
-  const isGame = !isIntro && !isLogin && !isDarkForestIntro && !isUniverseSelection && !isUniverseCreation
+  const isLevelOneInvite = window.location.pathname === '/invite/level1'
+  const isGame = !isIntro && !isLogin && !isDarkForestIntro && !isUniverseSelection && !isUniverseCreation && !isLevelOneInvite
   useEffect(() => {
-    if (isIntro || isLogin || isDarkForestIntro || isUniverseSelection || isUniverseCreation) return
+    if (isIntro || isLogin || isDarkForestIntro || isUniverseSelection || isUniverseCreation || isLevelOneInvite) return
     return subscribeToUniverse(dispatch)
-  }, [dispatch, isIntro, isLogin, isDarkForestIntro, isUniverseSelection, isUniverseCreation])
+  }, [dispatch, isIntro, isLogin, isDarkForestIntro, isUniverseSelection, isUniverseCreation, isLevelOneInvite])
   useEffect(() => {
     if (!isGame) return
-    const username = cachedUsername()
+    const username = cachedPlayerId()
     if (!username) return
     const universeId = currentUniverseId()
     const apiUrl = import.meta.env.VITE_SIMULATION_API_URL ?? 'http://localhost:5000'
@@ -46,5 +48,6 @@ export default function App() {
   if (isLogin) return <LoginPage />
   if (isUniverseSelection) return <UniversePage />
   if (isUniverseCreation) return <CreateUniversePage />
+  if (isLevelOneInvite) return <LevelOneInvitePage />
   return <GalaxyView musicControl={<MusicPlayer />} />
 }

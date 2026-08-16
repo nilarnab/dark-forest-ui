@@ -189,7 +189,7 @@ export function DarkForestIntroPage() {
       </div>
       <section className={`dark-forest-title${finale ? ' visible' : ''}`} aria-hidden={!finale}>
         <span>DARK FOREST</span>
-        <button className="dark-forest-next ready" type="button" onClick={() => { playUiClick(); window.location.assign('/?stage=intro-login') }}>LOGIN</button>
+        <button className="dark-forest-next ready" type="button" onClick={() => { playUiClick(); window.location.assign('/invite/level1') }}>START</button>
         <button className="dark-forest-next dark-forest-final-back" type="button" onClick={goBack}>&lt; BACK</button>
       </section>
     </main>
