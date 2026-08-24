@@ -13,6 +13,7 @@ export function CreateUniversePage({ embedded = false, onBack, onPreviewChange, 
   const username = cachedUsername()
   const [starCount, setStarCount] = useState(20)
   const [shipCount, setShipCount] = useState(3)
+  const [darkforest, setDarkforest] = useState(true)
   const [status, setStatus] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
@@ -37,7 +38,7 @@ export function CreateUniversePage({ embedded = false, onBack, onPreviewChange, 
       const response = await fetch(`${apiUrl}/auth/universe/new`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, options: { star_count: starCount, ship_count: shipCount } }),
+        body: JSON.stringify({ username, darkforest, options: { star_count: starCount, ship_count: shipCount } }),
       })
       const body = await response.json() as { ok?: boolean; error?: string; universe_id?: string }
       if (!response.ok || !body.ok || !body.universe_id) throw new Error(body.error ?? 'Universe creation failed.')
@@ -65,6 +66,14 @@ export function CreateUniversePage({ embedded = false, onBack, onPreviewChange, 
           <span>STARTER SHIPS <small>MAX 3</small></span>
           <input type="number" min="0" max="3" value={shipCount} onChange={(event) => setShipCount(Number(event.target.value))} required />
         </label>
+        <fieldset className="setup-row mode-row">
+          <legend>VISIBILITY MODE</legend>
+          <div className="mode-options">
+            <button className={darkforest ? 'selected' : ''} type="button" onClick={() => { playUiClick(); setDarkforest(true) }}>DARK FOREST</button>
+            <button className={!darkforest ? 'selected' : ''} type="button" onClick={() => { playUiClick(); setDarkforest(false) }}>OPEN VISIBILITY</button>
+          </div>
+          <small>{darkforest ? 'ENEMY INTEL REQUIRES RADAR CONTACT' : 'ALL OBJECTS AND STATUS ARE VISIBLE'}</small>
+        </fieldset>
         <div className="setup-row static-row">
           <span>GUN RANGE <small>ONE GUN PER SHIP</small></span>
           <output>DEFAULT · {Number.isFinite(defaultGunRange) ? defaultGunRange : 1000}</output>

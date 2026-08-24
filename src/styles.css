@@ -69,6 +69,14 @@ body { background: #02050a; font-family: ui-monospace, SFMono-Regular, Menlo, mo
 .game-sidebar-left { left: 16px; }
 .game-sidebar-right { right: 16px; padding-top: 190px; }
 .sidebar-title { color: #79b8ff; font-size: 10px; letter-spacing: .14em; }
+.match-control { display: grid; gap: 8px; padding: 10px; border: 1px solid #31576c; background: rgba(8, 27, 39, .7); }
+.match-control output, .match-control small { color: #91b9d0; font-size: 9px; line-height: 1.35; overflow-wrap: anywhere; }
+.match-control button { width: 100%; padding: 9px; border: 1px solid #4d738c; background: #0a1d2c; color: #dceeff; font: inherit; letter-spacing: .1em; cursor: pointer; }
+.match-control button:hover { border-color: #8ac8eb; background: #12314a; }
+.match-control .match-start { border-color: #4dd987; background: #0a3724; color: #d9ffe9; }
+.match-control .match-start.glowing { animation: match-start-glow 1.2s ease-in-out infinite; }
+.match-control .match-pause { border-color: #ff7373; background: rgba(72, 13, 18, .76); color: #ffe3e3; }
+.match-control button:disabled { cursor: wait; opacity: .65; }
 .player-card { display: grid; gap: 7px; padding: 10px; border: 1px solid #31576c; background: rgba(8, 27, 39, .7); }
 .player-card.offline { border-color: #31576c; background: rgba(8, 20, 31, .7); color: #7f9aad; }.player-card.offline small { color: #6f90a3; }.player-card.offline .status-bar b { background: #47718f; }
 .player-card.defeated { border-color: #a63f48; background: rgba(48, 10, 15, .72); }
@@ -109,6 +117,8 @@ body { background: #02050a; font-family: ui-monospace, SFMono-Regular, Menlo, mo
 .aim-cancel-overlay { position: fixed; z-index: 6; top: 18px; left: 50%; display: grid; gap: 5px; place-items: center; transform: translateX(-50%); border: 0; background: transparent; color: #bfffd6; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; cursor: pointer; }.aim-cancel-overlay b { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid #70f0ab; border-radius: 50%; background: rgba(10, 85, 50, .48); color: #e3ffed; font: 28px/1 sans-serif; font-weight: 300; }.aim-cancel-overlay:hover b { background: rgba(24, 140, 79, .7); box-shadow: 0 0 18px rgba(77, 217, 135, .4); }
 .transfer-choice-overlay { position: fixed; z-index: 6; top: 31px; left: 50%; max-width: min(440px, calc(100vw - 48px)); transform: translateX(-50%); padding: 10px 14px; border: 1px solid #70f0ab; background: rgba(5, 35, 24, .8); color: #d9ffe9; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .1em; line-height: 1.45; text-align: center; pointer-events: none; }
 .galaxy-shell > :not(.tutorial-guide):not(.tutorial-pointer) { transition: filter 1s ease; }
+.galaxy-shell.match-paused .galaxy-view, .galaxy-shell.match-paused .game-sidebar-right, .galaxy-shell.match-paused .game-sidebar-left > :not(.match-control):not(.sidebar-collapse) { filter: grayscale(1) brightness(.52); pointer-events: none; }
+.galaxy-shell.match-paused .game-sidebar-left, .galaxy-shell.match-paused .game-sidebar-right, .galaxy-shell.match-paused .galaxy-view { transition: filter 1s ease; }
 .galaxy-shell.tutorial-active > :not(.tutorial-guide):not(.tutorial-pointer) { filter: grayscale(1) brightness(.52); pointer-events: none; }
 .galaxy-shell.combat-tutorial > .galaxy-view, .galaxy-shell.combat-tutorial > .galaxy-view canvas, .galaxy-shell.combat-tutorial > .game-sidebar-right { pointer-events: auto !important; }
 .galaxy-shell.combat-target-lock > .game-sidebar-right { pointer-events: none !important; }
@@ -135,3 +145,10 @@ body { background: #02050a; font-family: ui-monospace, SFMono-Regular, Menlo, mo
 @keyframes terminal-darkening { to { background: rgba(0, 0, 0, .92); } }
 @keyframes terminal-panel-in { to { opacity: 1; transform: scale(1); } }
 @keyframes tutorial-pointer-pulse { 50% { opacity: .68; transform: scale(1.22); } }
+@keyframes match-start-glow { 50% { background: #12613d; box-shadow: 0 0 18px rgba(77, 217, 135, .64); } }
+.mode-row { display: grid; gap: 8px; padding: 12px 0; border: 0; margin: 0; min-width: 0; }
+.mode-row legend { padding: 0; color: #dceeff; font: inherit; letter-spacing: .1em; }
+.mode-row small { color: #84aac1; font-size: 10px; letter-spacing: .08em; }
+.mode-options { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.mode-options button { min-width: 0; padding: 10px 8px; border: 1px solid #31566f; background: #071722; color: #9dc0d5; font: inherit; font-size: 11px; letter-spacing: .08em; cursor: pointer; }
+.mode-options button:hover, .mode-options button.selected { border-color: #4dd987; background: #0c3528; color: #ddffeb; box-shadow: 0 0 14px rgba(77, 217, 135, .22); }

@@ -38,6 +38,8 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
   const [clockPulse, setClockPulse] = useState(0)
   const [tutorialSaving, setTutorialSaving] = useState(false)
   const [tutorialRevealed, setTutorialRevealed] = useState(true)
+  const [matchStatePending, setMatchStatePending] = useState(false)
+  const [inviteStatus, setInviteStatus] = useState<string | null>(null)
   const [tutorialPointer, setTutorialPointer] = useState<{ left: number; top: number; width: number; height: number; shape: 'circle' | 'rectangle'; tone: 'green' | 'red' } | null>(null)
   const seenHitEvents = useRef(new Set<string>())
   const nextMessageId = useRef(0)
@@ -54,6 +56,9 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
   const universeId = currentUniverseId()
   const currentUsername = cachedPlayerId()
   const levelOneCareer = universe?.career === true && universe.career_level === 1
+  const regularMatch = Boolean(universe && universe.career !== true && typeof universe.creator_id === 'string')
+  const isMatchCreator = regularMatch && universe?.creator_id === currentUsername
+  const matchPaused = regularMatch && universe?.active !== true
   const tutorialStep = levelOneCareer
     ? Math.max(0, Math.min(6, universe.career_state?.tutorial_step ?? 0))
     : null
@@ -496,8 +501,39 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
 
   const tutorialMapColorVisible = (initialTutorialActive && tutorialStep === 4) || (enemyContactTutorialActive && enemyContactStep === 1) || (combatTutorialActive && (combatTutorialStep ?? 0) >= 1)
 
+  async function setMatchActive(active: boolean) {
+    if (!isMatchCreator || matchStatePending) return
+    playUiClick()
+    setMatchStatePending(true)
+    try {
+      const apiUrl = import.meta.env.VITE_SIMULATION_API_URL ?? 'http://localhost:5000'
+      const response = await fetch(`${apiUrl}/universes/${encodeURIComponent(universeId)}/active`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: currentUsername, active }),
+      })
+      const body = await response.json() as { ok?: boolean; error?: string }
+      if (!response.ok || !body.ok) throw new Error(body.error ?? 'Could not update match state.')
+    } catch (error) {
+      setInviteStatus(error instanceof Error ? error.message : 'MATCH STATE UPDATE FAILED')
+    } finally {
+      setMatchStatePending(false)
+    }
+  }
+
+  async function copyInviteLink() {
+    const inviteLink = `${window.location.origin}/invite/universe/${encodeURIComponent(universeId)}`
+    try {
+      await navigator.clipboard.writeText(inviteLink)
+      playUiClick()
+      setInviteStatus('INVITE LINK COPIED')
+    } catch {
+      setInviteStatus(`COPY THIS LINK · ${inviteLink}`)
+    }
+  }
+
   return (
-    <div className={`galaxy-shell${tutorialActive ? ' tutorial-active' : ''}${combatTutorialActive ? ' combat-tutorial' : ''}${combatTutorialStep === 2 ? ' combat-target-lock' : ''}${tutorialMapColorVisible ? ' tutorial-map-color-visible' : ''}`}>
+    <div className={`galaxy-shell${tutorialActive ? ' tutorial-active' : ''}${combatTutorialActive ? ' combat-tutorial' : ''}${combatTutorialStep === 2 ? ' combat-target-lock' : ''}${tutorialMapColorVisible ? ' tutorial-map-color-visible' : ''}${matchPaused ? ' match-paused' : ''}`}>
       <div ref={host} className="galaxy-view" aria-label="Galaxy map" />
       {aimingGunId && <button type="button" className="aim-cancel-overlay" onClick={() => { playUiClick(); setAimingGunId(null) }}>
         <b>×</b><span>CANCEL AIMING MODE</span>
@@ -508,6 +544,17 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
       <aside className={`game-sidebar game-sidebar-left${leftCollapsed ? ' collapsed' : ''}`}>
         <button className="sidebar-collapse" onClick={() => setLeftCollapsed((value) => !value)}>{leftCollapsed ? '›' : '‹'}</button>
         <span className="sidebar-title">UNIVERSE ID · {universeId}</span>
+        {regularMatch && <section className="match-control">
+          <span className="sidebar-title">MATCH STATE</span>
+          {isMatchCreator ? <button type="button" className={matchPaused ? 'match-start glowing' : 'match-pause'} disabled={matchStatePending} onClick={() => void setMatchActive(matchPaused)}>
+            {matchStatePending ? 'SYNCING…' : matchPaused ? 'START MATCH' : 'PAUSE MATCH'}
+          </button> : <output>{matchPaused ? 'PAUSED · WAITING FOR HOST' : 'MATCH ACTIVE'}</output>}
+        </section>}
+        {regularMatch && isMatchCreator && <section className="match-control invite-control">
+          <span className="sidebar-title">INVITE LINK</span>
+          <button type="button" onClick={() => void copyInviteLink()}>COPY INVITE LINK</button>
+          {inviteStatus && <small>{inviteStatus}</small>}
+        </section>}
         <span className="sidebar-title">PLAYERS</span>
         {participants.map((player) => {
           const owned = Object.entries(objects).filter(([, object]) => object.owner === player)

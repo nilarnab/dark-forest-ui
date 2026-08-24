@@ -12,6 +12,7 @@ import { DarkForestIntroPage } from './components/DarkForestIntroPage'
 import { currentUniverseId } from './firebase/listener'
 import { cachedPlayerId } from './session'
 import { LevelOneInvitePage } from './components/LevelOneInvitePage'
+import { UniverseInvitePage } from './components/UniverseInvitePage'
 
 export default function App() {
   const dispatch = useDispatch<AppDispatch>()
@@ -21,11 +22,13 @@ export default function App() {
   const isUniverseSelection = window.location.pathname === '/intro/universe'
   const isUniverseCreation = window.location.pathname === '/intro/universe/new'
   const isLevelOneInvite = window.location.pathname === '/invite/level1'
-  const isGame = !isIntro && !isLogin && !isDarkForestIntro && !isUniverseSelection && !isUniverseCreation && !isLevelOneInvite
+  const invitedUniverseId = /^\/invite\/universe\/([^/]+)$/.exec(window.location.pathname)?.[1]
+  const isUniverseInvite = Boolean(invitedUniverseId)
+  const isGame = !isIntro && !isLogin && !isDarkForestIntro && !isUniverseSelection && !isUniverseCreation && !isLevelOneInvite && !isUniverseInvite
   useEffect(() => {
-    if (isIntro || isLogin || isDarkForestIntro || isUniverseSelection || isUniverseCreation || isLevelOneInvite) return
+    if (isIntro || isLogin || isDarkForestIntro || isUniverseSelection || isUniverseCreation || isLevelOneInvite || isUniverseInvite) return
     return subscribeToUniverse(dispatch)
-  }, [dispatch, isIntro, isLogin, isDarkForestIntro, isUniverseSelection, isUniverseCreation, isLevelOneInvite])
+  }, [dispatch, isIntro, isLogin, isDarkForestIntro, isUniverseSelection, isUniverseCreation, isLevelOneInvite, isUniverseInvite])
   useEffect(() => {
     if (!isGame) return
     const username = cachedPlayerId()
@@ -49,5 +52,6 @@ export default function App() {
   if (isUniverseSelection) return <UniversePage />
   if (isUniverseCreation) return <CreateUniversePage />
   if (isLevelOneInvite) return <LevelOneInvitePage />
+  if (invitedUniverseId) return <UniverseInvitePage universeId={decodeURIComponent(invitedUniverseId)} />
   return <GalaxyView musicControl={<MusicPlayer />} />
 }

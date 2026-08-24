@@ -52,6 +52,7 @@ export interface AttachedObject {
 
 export interface Universe {
   name?: string
+  creator_id?: string
   active?: boolean
   career?: boolean
   darkforest?: boolean
