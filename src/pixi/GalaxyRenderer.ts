@@ -1129,8 +1129,13 @@ export class GalaxyRenderer {
   private drawAimPreview() {
     this.aimPreview.clear()
     if (!this.aimSourceId || this.aimRange <= 0) return
-    const source = this.objectViews.get(this.aimSourceId)
-    if (!source) return
+    const sourceView = this.objectViews.get(this.aimSourceId)
+    if (!sourceView) return
+    // Use the same analytic source position as `getObjectPosition()` and the
+    // Flask shot command. `sourceView` intentionally eases behind it for
+    // smooth ship motion; drawing from that eased position made a rapidly
+    // moving ship's guide point in a different direction than the projectile.
+    const source = this.objectTargets.get(this.aimSourceId) ?? { x: sourceView.x, y: sourceView.y }
     // The circle is the gun's actual maximum travel distance; it remains
     // visible even before the player moves the cursor to choose a direction.
     this.aimPreview
