@@ -40,6 +40,7 @@ export interface UniverseObject {
   maneuver_blocked_till?: number
   hit_radius?: number
   source_objectid?: string
+  client_shot_id?: string
   delete_at?: number
 }
 
@@ -47,6 +48,9 @@ export interface AttachedObject {
   type?: string
   radius?: number
   velocity?: number
+  range?: number
+  cooldown_seconds?: number
+  last_fired_at?: number
   [property: string]: unknown
 }
 

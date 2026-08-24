@@ -3,7 +3,8 @@ import { playUiClick } from '../audio/sfx'
 import { cachedUsername } from '../session'
 import { enterUniverse } from '../universeAccess'
 
-const defaultGunRange = Number(import.meta.env.VITE_PROJECTILE_RANGE ?? 1000)
+const defaultGunRange = Number(import.meta.env.VITE_PROJECTILE_RANGE ?? 400)
+const defaultRadarRange = Number(import.meta.env.VITE_RADAR_RANGE ?? 300)
 
 function goTo(path: string) {
   window.location.assign(path)
@@ -14,6 +15,8 @@ export function CreateUniversePage({ embedded = false, onBack, onPreviewChange, 
   const [starCount, setStarCount] = useState(20)
   const [shipCount, setShipCount] = useState(3)
   const [darkforest, setDarkforest] = useState(true)
+  const [gunRange, setGunRange] = useState(Number.isFinite(defaultGunRange) ? defaultGunRange : 1000)
+  const [radarRange, setRadarRange] = useState(Number.isFinite(defaultRadarRange) ? defaultRadarRange : 500)
   const [status, setStatus] = useState<string | null>(null)
   const [creating, setCreating] = useState(false)
 
@@ -38,7 +41,7 @@ export function CreateUniversePage({ embedded = false, onBack, onPreviewChange, 
       const response = await fetch(`${apiUrl}/auth/universe/new`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, darkforest, options: { star_count: starCount, ship_count: shipCount } }),
+        body: JSON.stringify({ username, darkforest, options: { star_count: starCount, ship_count: shipCount, gun_range: gunRange, radar_radius: radarRange } }),
       })
       const body = await response.json() as { ok?: boolean; error?: string; universe_id?: string }
       if (!response.ok || !body.ok || !body.universe_id) throw new Error(body.error ?? 'Universe creation failed.')
@@ -74,10 +77,14 @@ export function CreateUniversePage({ embedded = false, onBack, onPreviewChange, 
           </div>
           <small>{darkforest ? 'ENEMY INTEL REQUIRES RADAR CONTACT' : 'ALL OBJECTS AND STATUS ARE VISIBLE'}</small>
         </fieldset>
-        <div className="setup-row static-row">
+        <label className="setup-row">
           <span>GUN RANGE <small>ONE GUN PER SHIP</small></span>
-          <output>DEFAULT · {Number.isFinite(defaultGunRange) ? defaultGunRange : 1000}</output>
-        </div>
+          <input type="number" min="1" step="1" value={gunRange} onChange={(event) => setGunRange(Number(event.target.value))} required />
+        </label>
+        <label className="setup-row">
+          <span>RADAR RANGE <small>STAR · SHIP HAS HALF RANGE</small></span>
+          <input type="number" min="1" step="1" value={radarRange} onChange={(event) => setRadarRange(Number(event.target.value))} required />
+        </label>
         <button className="intro-mode" type="submit" disabled={creating}>{creating ? 'GENERATING…' : 'CREATE UNIVERSE'}</button>
         {status && <output className="login-status">{status}</output>}
     </form>

@@ -270,7 +270,10 @@ export class GalaxyRenderer {
       rotation: rotation * Math.PI / 180,
       speed,
       firedAt,
-      expiresAt: firedAt + Math.max(0, range) / speed + 2,
+      // The client visual must obey the same range endpoint as Flask. An old
+      // two-second visual grace made fast shots visibly travel far beyond
+      // their configured gun range.
+      expiresAt: firedAt + Math.max(0, range) / speed,
       sourceId,
       hitRadius,
       lastPosition: start,
@@ -303,10 +306,8 @@ export class GalaxyRenderer {
     for (const [localId, preview] of this.localProjectilePreviews) {
       if (!localId.startsWith('local-projectile-')) continue
       const match = authoritativeProjectiles
-        .filter(([projectileId, object]) => !this.localProjectilePreviews.has(projectileId) && object.source_objectid === preview.sourceId)
-        .map(([projectileId, object]) => ({ projectileId, firedAt: projectileFiredAt(object) }))
-        .filter((candidate) => candidate.firedAt !== null && Math.abs(candidate.firedAt - preview.firedAt) <= 1)
-        .sort((first, second) => Math.abs(first.firedAt! - preview.firedAt) - Math.abs(second.firedAt! - preview.firedAt))[0]
+        .filter(([projectileId, object]) => !this.localProjectilePreviews.has(projectileId) && object.client_shot_id === localId)
+        .map(([projectileId, object]) => ({ projectileId, firedAt: projectileFiredAt(object) }))[0]
       if (match?.firedAt !== null && match) this.promoteLocalProjectile(localId, match.projectileId, match.firedAt)
     }
   }
@@ -620,6 +621,9 @@ export class GalaxyRenderer {
     const expected = new Set<string>()
     const displayTime = this.currentSimulationTime(performance.now())
     for (const [objectId, object] of Object.entries(allObjects)) {
+      // A Dark Forest match never leaks an enemy's current or planned orbit
+      // before one of the local player's radars detects that object.
+      if (this.darkForest && object.owner !== this.ownerUsername && !this.detectedObjectIds.has(objectId)) continue
       for (const [index, curve] of curveEntries(object.curves)) {
         if (curve.active === false) continue
         // Completed transfer/source curves no longer need server-side removal:
@@ -829,7 +833,7 @@ export class GalaxyRenderer {
     })
 
     this.localProjectilePreviews.forEach((preview, id) => {
-      const elapsed = Math.max(0, simulationTime - preview.firedAt)
+      const elapsed = Math.max(0, Math.min(simulationTime - preview.firedAt, preview.expiresAt - preview.firedAt))
       const position = preview.stoppedPosition ?? {
         x: preview.start.x + Math.cos(preview.rotation) * preview.speed * elapsed,
         y: preview.start.y + Math.sin(preview.rotation) * preview.speed * elapsed,
@@ -1124,9 +1128,15 @@ export class GalaxyRenderer {
 
   private drawAimPreview() {
     this.aimPreview.clear()
-    if (!this.aimSourceId || !this.aimPointer || this.aimRange <= 0) return
+    if (!this.aimSourceId || this.aimRange <= 0) return
     const source = this.objectViews.get(this.aimSourceId)
     if (!source) return
+    // The circle is the gun's actual maximum travel distance; it remains
+    // visible even before the player moves the cursor to choose a direction.
+    this.aimPreview
+      .circle(source.x, source.y, this.aimRange)
+      .stroke({ color: 0xffe8a3, width: 1, alpha: 0.46, pixelLine: true })
+    if (!this.aimPointer) return
     const dx = this.aimPointer.x - source.x
     const dy = this.aimPointer.y - source.y
     const length = Math.hypot(dx, dy)

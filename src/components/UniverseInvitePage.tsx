@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { cacheUniverseInviteGuestUserId, cachedUniverseInviteGuestUserId } from '../session'
+import { cacheUniverseInviteGuestUserId, ensureUniverseInviteGuestUserId } from '../session'
 
 export function UniverseInvitePage({ universeId }: { universeId: string }) {
   const [status, setStatus] = useState('ESTABLISHING SECURE CHANNEL…')
@@ -13,7 +13,7 @@ export function UniverseInvitePage({ universeId }: { universeId: string }) {
         const response = await fetch(`${apiUrl}/auth/universe/invite/enter`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ guest_user_id: cachedUniverseInviteGuestUserId(), universe_id: universeId }),
+          body: JSON.stringify({ guest_user_id: ensureUniverseInviteGuestUserId(), universe_id: universeId }),
           signal: controller.signal,
         })
         const body = await response.json() as { ok?: boolean; error?: string; user_id?: string; universe_id?: string }

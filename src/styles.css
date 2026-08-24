@@ -105,6 +105,9 @@ body { background: #02050a; font-family: ui-monospace, SFMono-Regular, Menlo, mo
 .transfer-panel button:hover { background: #105132; }
 .gun-actions { display: grid; gap: 7px; padding-top: 9px; border-top: 1px solid rgba(77, 217, 135, .35); }
 .aiming-status { color: #ffd080; font-size: 9px; line-height: 1.4; }
+.gun-cooldown { position: relative; display: grid; place-items: center; min-height: 32px; overflow: hidden; border: 1px solid #4d738c; background: #071722; color: #b9d4e8; font: inherit; letter-spacing: .12em; }
+.gun-cooldown i { position: absolute; inset: 0; transform-origin: left; background: rgba(77, 217, 135, .35); transition: transform .1s linear; }
+.gun-cooldown span { position: relative; z-index: 1; }
 .transient-messages { position: fixed; z-index: 4; top: 220px; right: 20px; display: grid; width: min(360px, calc(100vw - 40px)); gap: 8px; pointer-events: none; }
 .transient-message { padding: 10px 12px; border: 1px solid; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; animation: transient-message-fade 4s ease forwards; }
 .transient-message.correction { border-color: #ff8d71; background: rgba(40, 10, 8, .95); color: #ffd0c5; }

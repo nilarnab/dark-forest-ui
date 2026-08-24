@@ -28,6 +28,19 @@ export function cacheUniverseInviteGuestUserId(userId: string) {
   localStorage.setItem(universeInviteGuestUserKey, userId)
 }
 
+/**
+ * Allocate the guest identity before making the join request. React's
+ * development effect replay may abort/retry that request; using the same ID
+ * makes the backend transaction idempotent rather than creating two guests.
+ */
+export function ensureUniverseInviteGuestUserId() {
+  const existing = cachedUniverseInviteGuestUserId()
+  if (existing) return existing
+  const id = `guest_user_${crypto.randomUUID().replace(/-/g, '')}`
+  cacheUniverseInviteGuestUserId(id)
+  return id
+}
+
 /** The current gameplay owner ID. A pending career identity is not a login. */
 export function cachedPlayerId() {
   return cachedUniverseInviteGuestUserId() ?? cachedUsername() ?? cachedCareerGuestUserId()

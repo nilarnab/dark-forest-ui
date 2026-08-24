@@ -18,6 +18,7 @@ type TransientMessage = {
 export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
   const host = useRef<HTMLDivElement>(null)
   const renderer = useRef<GalaxyRenderer | null>(null)
+  const fireShotRef = useRef<((objectId: string, gunId: string, source: { x: number; y: number }, target: { x: number; y: number }) => Promise<void>) | null>(null)
   const rendererReady = useRef(false)
   const dispatch = useDispatch()
   const universe = useSelector((state: RootState) => state.universe.universe)
@@ -34,6 +35,8 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
   const [leftCollapsed, setLeftCollapsed] = useState(() => window.innerWidth < 640)
   const [rightCollapsed, setRightCollapsed] = useState(() => window.innerWidth < 640)
   const [aimingGunId, setAimingGunId] = useState<string | null>(null)
+  const [localGunCooldowns, setLocalGunCooldowns] = useState<Record<string, number>>({})
+  const localGunCooldownsRef = useRef<Record<string, number>>({})
   const [transientMessages, setTransientMessages] = useState<TransientMessage[]>([])
   const [clockPulse, setClockPulse] = useState(0)
   const [tutorialSaving, setTutorialSaving] = useState(false)
@@ -107,6 +110,17 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
   ))
   const maneuverBlocked = typeof selectedObject?.maneuver_blocked_till === 'number' && selectedObject.maneuver_blocked_till > currentTime
   const guns = Object.entries(selectedObject?.objects ?? {}).filter(([, attached]) => attached.type === 'GUN')
+  const activeGun = aimingGunId ? selectedObject?.objects?.[aimingGunId] : undefined
+  const activeGunCooldown = typeof activeGun?.cooldown_seconds === 'number' ? activeGun.cooldown_seconds : 1
+  const activeGunKey = aimingGunId && selectedObjectId ? `${selectedObjectId}:${aimingGunId}` : null
+  const activeGunReadyAt = activeGunKey
+    ? Math.max(
+      typeof activeGun?.last_fired_at === 'number' ? activeGun.last_fired_at + activeGunCooldown : Number.NEGATIVE_INFINITY,
+      localGunCooldowns[activeGunKey] ?? Number.NEGATIVE_INFINITY,
+    )
+    : Number.NEGATIVE_INFINITY
+  const activeGunCooldownRemaining = Math.max(0, activeGunReadyAt - currentTime)
+  const activeGunCooldownProgress = activeGunCooldown > 0 ? Math.max(0, Math.min(1, 1 - activeGunCooldownRemaining / activeGunCooldown)) : 1
   const players = [...new Set(Object.values(objects).map((object) => object.owner).filter((owner): owner is string => typeof owner === 'string'))]
   const participants = [...new Set([...(Object.keys(universe?.participants ?? {})), ...players])]
   const participantStates = new Map(participants.map((player) => [player, defeatState(player, objects)]))
@@ -145,7 +159,7 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
         if (current.controlsSelectedObject && current.aimingGunId && current.selectedObjectId && current.selectedObject && clicked) {
           const source = positionOf(current.selectedObject)
           const target = positionOf(clicked)
-          if (source && target) void fireShot(current.selectedObjectId, current.aimingGunId, source, target)
+          if (source && target) void fireShotRef.current?.(current.selectedObjectId, current.aimingGunId, source, target)
           return
         }
         if (current.orbitTransferMode && current.controlsSelectedObject && current.selectedObject?.type === 'ARTIFICIAL' && clicked?.type === 'NATURAL' && id !== current.selectedObjectId) {
@@ -173,7 +187,7 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
         if (current.combatTutorialStep !== null && current.combatTutorialStep < 5) return
         if (current.controlsSelectedObject && current.aimingGunId && current.selectedObjectId && current.selectedObject) {
           const source = positionOf(current.selectedObject)
-          if (source) void fireShot(current.selectedObjectId, current.aimingGunId, source, point)
+          if (source) void fireShotRef.current?.(current.selectedObjectId, current.aimingGunId, source, point)
           return
         }
         setTransferTargetId(null)
@@ -356,9 +370,9 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
     )
   }, [maneuverBlocked, orbitTransferMode, selectedObject, selectedObject?.type, transferRadius, transferTarget?.type, transferTargetId])
   useEffect(() => {
-    const range = Number(import.meta.env.VITE_PROJECTILE_RANGE ?? 1000)
-    renderer.current?.setAimPreview(aimingGunId && selectedObjectId ? selectedObjectId : null, Number.isFinite(range) && range > 0 ? range : 1000)
-  }, [aimingGunId, selectedObjectId])
+    const range = typeof activeGun?.range === 'number' ? activeGun.range : Number(import.meta.env.VITE_PROJECTILE_RANGE ?? 400)
+    renderer.current?.setAimPreview(aimingGunId && selectedObjectId ? selectedObjectId : null, Number.isFinite(range) && range > 0 ? range : 400)
+  }, [activeGun?.range, aimingGunId, selectedObjectId])
 
   async function sendTransfer() {
     if (!selectedObjectId || !transferTargetId || maneuverBlocked) return
@@ -392,7 +406,16 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
     const gun = interaction.current.selectedObject?.objects?.[gunId]
     const speed = typeof gun?.velocity === 'number' ? gun.velocity : 0
     const hitRadius = typeof gun?.hit_radius === 'number' ? gun.hit_radius : 0
-    const range = Number(import.meta.env.VITE_PROJECTILE_RANGE ?? 1000)
+    const range = typeof gun?.range === 'number' ? gun.range : Number(import.meta.env.VITE_PROJECTILE_RANGE ?? 400)
+    const cooldownSeconds = typeof gun?.cooldown_seconds === 'number' ? gun.cooldown_seconds : 1
+    const cooldownKey = `${objectId}:${gunId}`
+    const readyAt = Math.max(
+      typeof gun?.last_fired_at === 'number' ? gun.last_fired_at + cooldownSeconds : Number.NEGATIVE_INFINITY,
+      localGunCooldownsRef.current[cooldownKey] ?? Number.NEGATIVE_INFINITY,
+    )
+    if (clientFiredAt < readyAt) return
+    localGunCooldownsRef.current = { ...localGunCooldownsRef.current, [cooldownKey]: clientFiredAt + cooldownSeconds }
+    setLocalGunCooldowns(localGunCooldownsRef.current)
     const localProjectileId = `local-projectile-${Date.now()}-${Math.random().toString(36).slice(2)}`
     renderer.current?.launchLocalProjectile(
       localProjectileId,
@@ -402,7 +425,7 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
       speed,
       hitRadius,
       clientFiredAt,
-      Number.isFinite(range) && range > 0 ? range : 1000,
+      Number.isFinite(range) && range > 0 ? range : 400,
     )
     playGunFire()
     setTransferStatus('Firing…')
@@ -416,19 +439,30 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
           gun_id: gunId,
           rotation,
           client_fired_at: clientFiredAt,
+          client_shot_id: localProjectileId,
         }),
       })
       const body = await response.json() as { ok?: boolean; error?: string; projectile_id?: string; fired_at?: number }
       if (!response.ok || !body.ok) throw new Error(body.error ?? 'Shot request failed.')
       if (body.projectile_id && typeof body.fired_at === 'number') {
-        renderer.current?.promoteLocalProjectile(localProjectileId, body.projectile_id, body.fired_at)
+        const firedAt = body.fired_at
+        renderer.current?.promoteLocalProjectile(localProjectileId, body.projectile_id, firedAt)
+        localGunCooldownsRef.current = { ...localGunCooldownsRef.current, [cooldownKey]: firedAt + cooldownSeconds }
+        setLocalGunCooldowns(localGunCooldownsRef.current)
       }
       setTransferStatus('Shot fired.')
     } catch (error) {
       renderer.current?.discardLocalProjectile(localProjectileId)
+      const nextCooldowns = { ...localGunCooldownsRef.current }
+      delete nextCooldowns[cooldownKey]
+      localGunCooldownsRef.current = nextCooldowns
+      setLocalGunCooldowns(nextCooldowns)
       setTransferStatus(error instanceof Error ? error.message : 'Shot request failed.')
     }
   }
+  // The renderer is initialized once, so its pointer callbacks must call the
+  // current render's firing function rather than retaining an old closure.
+  fireShotRef.current = fireShot
 
   async function runTutorialAction(action: 'next' | 'back' | 'auto_pause' | 'ensure_paused' | 'enemy_contact' | 'contact_next' | 'contact_back' | 'begin_combat' | 'combat_ship' | 'combat_orbit' | 'combat_star' | 'combat_transfer_sent' | 'combat_radar_locked' | 'combat_status_next' | 'combat_finish', objectId?: string) {
     if (!universeId || tutorialRequestInFlight.current) return
@@ -612,6 +646,7 @@ export function GalaxyView({ musicControl }: { musicControl?: ReactNode }) {
               {aimingGunId ? (
                 <>
                   <span className="aiming-status">AIMING · click any map point</span>
+                  {activeGunCooldownRemaining > 0 && <div className="gun-cooldown" aria-label={`Gun ready in ${activeGunCooldownRemaining.toFixed(1)} seconds`}><i style={{ transform: `scaleX(${activeGunCooldownProgress})` }} /><span>RECHARGING</span></div>}
                   <button type="button" onClick={() => { playUiClick(); setAimingGunId(null) }}>CANCEL AIM</button>
                 </>
               ) : guns.map(([gunId, gun]) => (
